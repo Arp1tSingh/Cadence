@@ -158,17 +158,17 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 ## Current Status
 
 - **Phase 0 — complete.** Vite 7 + React 19 + TypeScript 5.9 + Tailwind v4 scaffold, design tokens, shared UI primitives, theme engine, error boundary, COOP/COEP headers, deploy configs, and asset copying.
-- **Phase 1 — in progress.** Domain schema, IndexedDB/OPFS, text normalization, EPUB/PDF parser worker, bookshelf and import flow.
-- `npm run typecheck && npm run lint && npm run test && npm run build` passes.
-- Next: define the domain schema and storage layer, then parse a real EPUB and PDF.
+- **Phase 1 — complete.** Domain schema, IndexedDB/OPFS storage, text normalization and speech expansion, sentence/word/chunk builder, EPUB parser (nav + NCX + heading-level splitting), PDF layout engine, palette extraction, parser worker/client, bookshelf, import sheet, window dropzones, and progress UI.
+- `npm run typecheck && npm run lint && npm run test && npm run build` passes (9 files, 41 tests).
+- Next: Phase 2 — Kokoro TTS worker, PCM cache, audio scheduler, playback controls.
 
 ## Phase Tracker
 
 | Phase | Status | Notes |
 |---|---|---|
 | 0. Scaffold + design system | Complete | Vite/React/Tailwind, primitives, theme, isolation headers |
-| 1. Ingestion + bookshelf | In progress | |
-| 2. TTS + playback | Not started | |
+| 1. Ingestion + bookshelf | Complete | EPUB + PDF, OPFS/IDB, import UX, palette covers |
+| 2. TTS + playback | In progress | |
 | 3. Live Lyrics + voice/speed | Not started | |
 | 4. Export + settings + polish | Not started | |
 
@@ -187,6 +187,17 @@ Add one dated entry per milestone. Keep entries short: what changed, what passed
 - Configured COOP/COEP for dev and preview; added Netlify, Vercel, and Cloudflare Pages headers.
 - Added `vite-plugin-static-copy` targets for ORT WASM and PDF.js CMaps/fonts.
 - Added ESLint 10 flat config and Vitest. Verified typecheck, lint, tests, production build, preview headers, WASM and CMap serving.
+
+### 2026-11-13 — Phase 1 ingestion + bookshelf
+- Added domain schema (`BookDocument`, `ChapterNode`, `SentenceNode`, `WordToken`, `TtsChunk`) and parser worker contracts.
+- Built normalization + speech expansion (numbers, abbreviations, symbols) and per-word TTS span mapping so display text stays intact while inference uses expanded text.
+- Sentence chunker respects punctuation/conjunction boundaries and caps chunks in spoken characters, not display characters.
+- EPUB: JSZip + `fast-xml-parser` + `linkedom/worker`, container/OPF/spine, EPUB3 nav and EPUB2 NCX, DRM detection, cover extraction, and splitting at the most important repeating heading level (Gutenberg packs 3–5 `<h2>` chapters per file).
+- PDF: PDF.js with a nested Vite worker, local CMaps/fonts, two-column detection, line/paragraph grouping, header/footer/page-number stripping, rotated-run filtering, body-font sizing, heading/chapter detection, and a word-budget fallback.
+- Storage: OPFS manager for sources/covers/cache/exports; IndexedDB schema for books, progress, settings, audio cache, and export jobs.
+- Import UX: parser worker with SHA-256 fingerprint and duplicate detection, palette extraction from covers (deterministic fallback palettes), import sheet with progress, window drag-and-drop, book cards, detail sheet, and remove flow.
+- Real-book QA: *Pride and Prejudice* → 76 chapters / 6,420 sentences / 130,399 words; arXiv *Attention Is All You Need* → 8 clean sections / 385 sentences / 5,716 words.
+- Verified: 9 test files / 41 tests, typecheck, lint, and production build (parser + PDF workers emitted).
 
 ## Context-Management Protocol
 

@@ -1,6 +1,11 @@
-import { AudioLines, Captions, ShieldCheck, Sparkles, type LucideIcon } from 'lucide-react';
+import { AudioLines, Captions, Plus, ShieldCheck, Sparkles, type LucideIcon } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { BookShowcase } from '@/components/bookshelf/BookShowcase';
+import { Button } from '@/components/ui/Button';
+
+type EmptyLibraryProps = {
+  onImport: () => void;
+};
 
 type FeatureProps = {
   icon: LucideIcon;
@@ -16,11 +21,11 @@ function Feature({ icon: Icon, label }: FeatureProps) {
   );
 }
 
-export function EmptyLibrary() {
+export function EmptyLibrary({ onImport }: EmptyLibraryProps) {
   const reduceMotion = useReducedMotion();
 
   return (
-    <div className="grid items-center gap-12 lg:grid-cols-[1.02fr_0.98fr] lg:gap-8">
+    <div className="grid w-full items-center gap-12 lg:grid-cols-[1.02fr_0.98fr] lg:gap-8">
       <motion.section
         initial={reduceMotion ? false : { opacity: 0, y: 18 }}
         animate={{ opacity: 1, y: 0 }}
@@ -51,15 +56,23 @@ export function EmptyLibrary() {
           <Feature icon={ShieldCheck} label="Nothing uploaded" />
         </div>
 
-        <div className="glass mt-9 flex max-w-[34rem] items-start gap-3.5 rounded-card p-4">
+        <div className="mt-8 flex flex-wrap items-center gap-4">
+          <Button size="lg" onClick={onImport}>
+            <Plus size={18} aria-hidden="true" />
+            Add your first book
+          </Button>
+          <span className="text-[12px] text-ink-tertiary">or drop an EPUB / PDF anywhere</span>
+        </div>
+
+        <div className="glass mt-8 flex max-w-[34rem] items-start gap-3.5 rounded-card p-4">
           <div className="grid size-9 shrink-0 place-items-center rounded-full bg-brand-soft text-brand">
             <Sparkles size={16} aria-hidden="true" />
           </div>
           <div>
-            <p className="text-[13px] font-semibold">Foundation complete</p>
+            <p className="text-[13px] font-semibold">Ingestion is ready</p>
             <p className="mt-1 text-[12.5px] leading-relaxed text-ink-secondary">
-              The scaffold, design system, and theme engine are in place. Next: EPUB and PDF
-              ingestion, chapter detection, and the library shelf.
+              Import a book and Cadence will detect chapters, split sentences, expand numbers and
+              abbreviations for narration, and keep every word mapped for karaoke-style lyrics.
             </p>
           </div>
         </div>
