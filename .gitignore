@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+dist-ssr/
+.vite/
+*.local
+
+# Test output
+coverage/
+playwright-report/
+test-results/
+.vitest/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Models and generated media
+models/
+*.onnx
+*.onnx_data
+*.bin
+*.i16
+*.pcm
+*.mp3
+*.m4b
+*.mp4
+*.wav
+
+# Sample books and downloads
+samples/
+downloads/
+
+# Editor and OS files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and temp
+*.log
+npm-debug.log*
+*.tmp
+.cache/
+.temp/
