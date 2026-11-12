@@ -21,14 +21,40 @@ export default defineConfig({
         {
           src: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded*.wasm',
           dest: 'wasm',
+          rename: { stripBase: true },
         },
         {
           src: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded*.mjs',
           dest: 'wasm',
+          rename: { stripBase: true },
         },
         // PDF.js loads CMaps and the standard font data on demand.
-        { src: 'node_modules/pdfjs-dist/cmaps/*', dest: 'pdfjs/cmaps' },
-        { src: 'node_modules/pdfjs-dist/standard_fonts/*', dest: 'pdfjs/standard_fonts' },
+        {
+          src: 'node_modules/pdfjs-dist/cmaps/*',
+          dest: 'pdfjs/cmaps',
+          rename: { stripBase: true },
+        },
+        {
+          src: 'node_modules/pdfjs-dist/standard_fonts/*',
+          dest: 'pdfjs/standard_fonts',
+          rename: { stripBase: true },
+        },
+        // Curated Kokoro style vectors. Bundling them keeps voice switching
+        // offline: roughly 4 MB for the eight curated voices.
+        {
+          src: [
+            'node_modules/kokoro-js/voices/af_heart.bin',
+            'node_modules/kokoro-js/voices/af_bella.bin',
+            'node_modules/kokoro-js/voices/af_nicole.bin',
+            'node_modules/kokoro-js/voices/am_michael.bin',
+            'node_modules/kokoro-js/voices/am_fenrir.bin',
+            'node_modules/kokoro-js/voices/bf_emma.bin',
+            'node_modules/kokoro-js/voices/bm_george.bin',
+            'node_modules/kokoro-js/voices/bm_fable.bin',
+          ],
+          dest: 'voices',
+          rename: { stripBase: true },
+        },
       ],
     }),
   ],

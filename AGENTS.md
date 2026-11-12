@@ -159,8 +159,11 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 
 - **Phase 0 — complete.** Vite 7 + React 19 + TypeScript 5.9 + Tailwind v4 scaffold, design tokens, shared UI primitives, theme engine, error boundary, COOP/COEP headers, deploy configs, and asset copying.
 - **Phase 1 — complete.** Domain schema, IndexedDB/OPFS storage, text normalization and speech expansion, sentence/word/chunk builder, EPUB parser (nav + NCX + heading-level splitting), PDF layout engine, palette extraction, parser worker/client, bookshelf, import sheet, window dropzones, and progress UI.
-- `npm run typecheck && npm run lint && npm run test && npm run build` passes (9 files, 41 tests).
-- Next: Phase 2 — Kokoro TTS worker, PCM cache, audio scheduler, playback controls.
+- **Phase 2 — complete.** Kokoro TTS worker with a foreground/prefetch queue, OPFS Int16 audio cache keyed by engine version + voice + text hash, Web Audio scheduler, player session (lookahead, buffering, seek, chapter/voice restart), MediaSession and Wake Lock, settings/player stores, and the player UI (lyrics stage, glass dock, chapter drawer, voice sheet, model setup, error overlay).
+- Real-browser QA (Edge, `playwright-core`): q8 WASM download (88 MB), model init, word-level playback, prefetch cache growth, pause/resume, next sentence, chapter jump, and per-voice caching (`af_heart` + `bf_emma`) verified with real Kokoro inference.
+- Measured on the QA laptop (i5-8265U, 15 W, 4 threads): Kokoro q8 WASM runs at roughly **0.2× real time** (3.7 s of audio in ~19–25 s), and fp32 WASM is not faster. Threading scales only ~1.1×. The UI now labels this state instead of showing an indefinite spinner.
+- `npm run typecheck && npm run lint && npm run test && npm run build` passes (14 files, 78 tests, zero lint warnings).
+- Next: Phase 3 — Live Lyrics polish (Book Page mode), 2D voice-blend pad, WSOLA speed control.
 
 ## Phase Tracker
 
@@ -168,8 +171,8 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 |---|---|---|
 | 0. Scaffold + design system | Complete | Vite/React/Tailwind, primitives, theme, isolation headers |
 | 1. Ingestion + bookshelf | Complete | EPUB + PDF, OPFS/IDB, import UX, palette covers |
-| 2. TTS + playback | In progress | |
-| 3. Live Lyrics + voice/speed | Not started | |
+| 2. TTS + playback | Complete | Kokoro worker, OPFS PCM cache, scheduler, player UI |
+| 3. Live Lyrics + voice/speed | In progress | |
 | 4. Export + settings + polish | Not started | |
 
 ## Progress Log
@@ -198,6 +201,18 @@ Add one dated entry per milestone. Keep entries short: what changed, what passed
 - Import UX: parser worker with SHA-256 fingerprint and duplicate detection, palette extraction from covers (deterministic fallback palettes), import sheet with progress, window drag-and-drop, book cards, detail sheet, and remove flow.
 - Real-book QA: *Pride and Prejudice* → 76 chapters / 6,420 sentences / 130,399 words; arXiv *Attention Is All You Need* → 8 clean sections / 385 sentences / 5,716 words.
 - Verified: 9 test files / 41 tests, typecheck, lint, and production build (parser + PDF workers emitted).
+
+### 2026-11-13 — Phase 2 TTS + playback
+- `tts.worker.ts`: Comlink-exposed priority queue (foreground jumps ahead of prefetch), cache-first synthesis, and `cancelPending()` so seeks and voice changes are not starved by stale work. Transferable Float32 PCM to the main thread.
+- `engine.ts`: Kokoro via `kokoro-js` with `@huggingface/transformers` 3.8.1; OPFS custom model cache; WebGPU → WASM fallback; monotonic load progress (Transformers.js reports per-file progress); voice-style blending; eSpeak phonemization of whole spans; long-phrase splitting at ≤38 words / ≤500 phoneme tokens.
+- Audio cache: 16-bit PCM in OPFS under `cache/<bookId>/<voiceKey>/<key>.i16`, metadata and word timings in IndexedDB. Cache key = engine version + voice key + sentence id + SHA-256 of the TTS text, so pronunciation changes never reuse stale audio.
+- Playback: `AudioScheduler` schedules sentences sample-accurately on the Web Audio clock with a 0.3 s lead; `PlayerSession` runs 6-sentence lookahead, suspends the context while buffering, resumes when audio arrives, and persists progress. MediaSession + Wake Lock wired.
+- UI: Live Lyrics stage with clipped-duplicate word fills written from `requestAnimationFrame` (no per-word React renders), glass transport dock with a scrubber, chapter drawer, voice sheet with two-voice blend slider, first-run model overlay, and a start-listening CTA that preserves the iOS user gesture.
+- Fixed static-copy targets to strip `node_modules/...` base paths; voices now resolve at `/voices/*.bin`, ORT at `/wasm/`, PDF.js at `/pdfjs/cmaps` and `/pdfjs/standard_fonts`.
+- Fixed a drain bug that dropped ready audio when the graph could not accept it, and empty-audio sentences now advance the timeline instead of stalling it.
+- Real-browser QA with Edge + `playwright-core` on a persistent profile: confirmed playback, prefetch growth, pause/resume, next sentence, chapter jump, and both `af_heart` and `bf_emma` cache directories.
+- Performance observation: on the 15 W i5-8265U QA laptop, q8 WASM is ~0.2× real time and fp32 is not faster; 4 threads add ~10% over 1. The dock now says "Synthesizing on this device — slower than real time…" after 6 s of buffering.
+- Verified: 14 test files / 78 tests, typecheck, lint (0 warnings), production build.
 
 ## Context-Management Protocol
 
@@ -236,6 +251,7 @@ This project is large; protect context deliberately:
 
 - M4B `chpl` chapter compatibility in Apple Books (accepted; can add a QuickTime chapter track later).
 - Full-book PCM cache can reach multiple GB; add a cache cap and clear-after-export option.
-- WASM-only devices may synthesize slower than real time; UI must degrade gracefully with buffering states.
+- WASM-only devices may synthesize slower than real time; measured ~0.2× real time on a 15 W i5 with q8, so buffering can last tens of seconds per sentence. The dock labels this, but the next real lever is WebGPU (real adapter) and/or a faster WASM configuration.
+- Seek, voice change, and pause call `cancelPending()`; the one in-flight inference still finishes and is cached, so a switch can lag by at most one sentence.
 - PDF layout extraction is heuristic; test with varied real-world PDFs.
 - Large books stress IndexedDB/OPFS; avoid loading entire audio or all sentences into memory at once.

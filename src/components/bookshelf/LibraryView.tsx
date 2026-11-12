@@ -1,4 +1,4 @@
-import { Plus } from 'lucide-react';
+import { Play, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Sheet } from '@/components/ui/Sheet';
@@ -11,9 +11,10 @@ import { BookCover } from './BookCover';
 
 type LibraryViewProps = {
   onImport: () => void;
+  onListen: (book: BookDocument) => void;
 };
 
-export function LibraryView({ onImport }: LibraryViewProps) {
+export function LibraryView({ onImport, onListen }: LibraryViewProps) {
   const books = useLibraryStore((state) => state.books);
   const removeBook = useLibraryStore((state) => state.removeBook);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -83,6 +84,10 @@ export function LibraryView({ onImport }: LibraryViewProps) {
         book={selected}
         open={Boolean(selected)}
         onClose={() => setSelectedId(null)}
+        onListen={(book) => {
+          setSelectedId(null);
+          onListen(book);
+        }}
         onRemove={(book) => {
           setSelectedId(null);
           setRemoveId(book.id);
@@ -136,10 +141,11 @@ type BookDetailSheetProps = {
   book: BookDocument | null;
   open: boolean;
   onClose: () => void;
+  onListen: (book: BookDocument) => void;
   onRemove: (book: BookDocument) => void;
 };
 
-function BookDetailSheet({ book, open, onClose, onRemove }: BookDetailSheetProps) {
+function BookDetailSheet({ book, open, onClose, onListen, onRemove }: BookDetailSheetProps) {
   if (!book) return null;
 
   const facts = [
@@ -174,7 +180,10 @@ function BookDetailSheet({ book, open, onClose, onRemove }: BookDetailSheetProps
           >
             Remove
           </Button>
-          <Button onClick={onClose}>Done</Button>
+          <Button onClick={() => onListen(book)}>
+            <Play size={15} fill="currentColor" aria-hidden="true" />
+            Listen
+          </Button>
         </>
       }
     >
@@ -202,8 +211,8 @@ function BookDetailSheet({ book, open, onClose, onRemove }: BookDetailSheetProps
           ) : null}
 
           <p className="mt-4 rounded-card border border-hairline bg-surface-muted/50 px-3 py-2 text-[11.5px] leading-relaxed text-ink-secondary">
-            Chapters and sentences are parsed and timed. Narration and the Live Lyrics player
-            arrive with the next milestone.
+            Narrated on this device with Kokoro-82M. Press Listen to open the Live Lyrics player,
+            then play to synthesize the first sentences.
           </p>
         </div>
       </div>

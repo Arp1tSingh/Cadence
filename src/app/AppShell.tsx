@@ -5,6 +5,7 @@ import { EmptyLibrary } from '@/components/bookshelf/EmptyLibrary';
 import { ImportSheet } from '@/components/bookshelf/ImportSheet';
 import { LibraryView } from '@/components/bookshelf/LibraryView';
 import { MeshBackdrop } from '@/components/player/MeshBackdrop';
+import { PlayerView } from '@/components/player/PlayerView';
 import { Button } from '@/components/ui/Button';
 import { IconButton } from '@/components/ui/IconButton';
 import { LogoMark } from '@/components/ui/LogoMark';
@@ -13,6 +14,8 @@ import { useTheme } from '@/hooks/useTheme';
 import { useWindowFileDrop } from '@/hooks/useWindowFileDrop';
 import { cn } from '@/lib/cn';
 import { useLibraryStore } from '@/store/libraryStore';
+import { usePlayerStore } from '@/store/playerStore';
+import { useSettingsStore } from '@/store/settingsStore';
 
 function LibrarySkeleton() {
   return (
@@ -58,6 +61,9 @@ export function AppShell() {
   const loadError = useLibraryStore((state) => state.loadError);
   const load = useLibraryStore((state) => state.load);
   const addFiles = useLibraryStore((state) => state.addFiles);
+  const playerBookId = usePlayerStore((state) => state.bookId);
+  const openBook = usePlayerStore((state) => state.openBook);
+  const closePlayer = usePlayerStore((state) => state.closePlayer);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const [importOpen, setImportOpen] = useState(false);
@@ -65,7 +71,17 @@ export function AppShell() {
 
   useEffect(() => {
     void load();
+    void useSettingsStore.getState().load();
   }, [load]);
+
+  // If the open book disappears from the library (for example while it is
+  // being removed), leave the player instead of showing a stale snapshot.
+  useEffect(() => {
+    if (!loaded || !playerBookId) return;
+    if (!books.some((book) => book.id === playerBookId)) {
+      void closePlayer();
+    }
+  }, [books, closePlayer, loaded, playerBookId]);
 
   const handleFiles = useCallback(
     (files: File[]) => {
@@ -80,6 +96,13 @@ export function AppShell() {
   const pickFiles = useCallback(() => inputRef.current?.click(), []);
 
   const isEmpty = loaded && !loadError && books.length === 0;
+  const playerBook = playerBookId
+    ? (books.find((book) => book.id === playerBookId) ?? null)
+    : null;
+
+  if (playerBook) {
+    return <PlayerView book={playerBook} />;
+  }
 
   return (
     <div className="relative flex min-h-dvh flex-col overflow-x-hidden">
@@ -135,7 +158,7 @@ export function AppShell() {
         ) : books.length === 0 ? (
           <EmptyLibrary onImport={pickFiles} />
         ) : (
-          <LibraryView onImport={pickFiles} />
+          <LibraryView onImport={pickFiles} onListen={(book) => void openBook(book)} />
         )}
       </main>
 
