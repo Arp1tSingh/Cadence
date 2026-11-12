@@ -51,8 +51,6 @@ Detailed rationale for these choices is in the conversation/blueprint; the impor
 
 ## Commands
 
-These scripts will exist after Phase 0:
-
 ```bash
 npm install
 npm run dev          # Vite dev server with COOP/COEP headers
@@ -65,6 +63,13 @@ npm run test:watch
 ```
 
 Always run `npm run typecheck && npm run lint && npm run test && npm run build` before pushing a milestone.
+
+### Build Notes
+
+- `vite-plugin-static-copy` copies ORT WASM and PDF.js CMaps/standard fonts into `dist/wasm` and `dist/pdfjs` (and serves them in dev). Do not commit generated assets.
+- `onnxruntime-web` is pinned to the exact version required by `@huggingface/transformers` 3.8.1.
+- `public/` holds only hand-authored files (`favicon.svg`, `_headers`).
+- The theme preference currently lives in `localStorage` (`cadence.theme`) for flash-free first paint; migrate it into the settings store when that lands.
 
 ## Architecture Map
 
@@ -152,17 +157,17 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 
 ## Current Status
 
-- **Phase 0 — not started.** Repository setup only.
-- Blueprint is available at the repo root.
-- `AGENTS.md`, `README.md`, and `.gitignore` exist.
-- Next: scaffold Vite/React/Tailwind, install dependencies, add COOP/COEP headers and core scripts.
+- **Phase 0 — complete.** Vite 7 + React 19 + TypeScript 5.9 + Tailwind v4 scaffold, design tokens, shared UI primitives, theme engine, error boundary, COOP/COEP headers, deploy configs, and asset copying.
+- **Phase 1 — in progress.** Domain schema, IndexedDB/OPFS, text normalization, EPUB/PDF parser worker, bookshelf and import flow.
+- `npm run typecheck && npm run lint && npm run test && npm run build` passes.
+- Next: define the domain schema and storage layer, then parse a real EPUB and PDF.
 
 ## Phase Tracker
 
 | Phase | Status | Notes |
 |---|---|---|
-| 0. Scaffold + design system | Not started | |
-| 1. Ingestion + bookshelf | Not started | |
+| 0. Scaffold + design system | Complete | Vite/React/Tailwind, primitives, theme, isolation headers |
+| 1. Ingestion + bookshelf | In progress | |
 | 2. TTS + playback | Not started | |
 | 3. Live Lyrics + voice/speed | Not started | |
 | 4. Export + settings + polish | Not started | |
@@ -175,6 +180,13 @@ Add one dated entry per milestone. Keep entries short: what changed, what passed
 - Created public GitHub repo.
 - Added `AGENTS.md`, `README.md`, `.gitignore`.
 - Initial commit pushed to `main`.
+
+### 2026-11-13 — Phase 0 scaffold
+- Added Vite 7 / React 19 / TypeScript 5.9 / Tailwind v4 app shell and design tokens.
+- Added `Button`, `IconButton`, `ProgressRing`, `LogoMark`, theme hook, and error boundary.
+- Configured COOP/COEP for dev and preview; added Netlify, Vercel, and Cloudflare Pages headers.
+- Added `vite-plugin-static-copy` targets for ORT WASM and PDF.js CMaps/fonts.
+- Added ESLint 10 flat config and Vitest. Verified typecheck, lint, tests, production build, preview headers, WASM and CMap serving.
 
 ## Context-Management Protocol
 

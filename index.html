@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b0b0f" />
+    <meta
+      name="description"
+      content="Cadence turns EPUB and PDF books into audiobooks entirely on your device, with word-synced live lyrics."
+    />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Cadence — Every book, read aloud</title>
+    <script>
+      // Apply the saved appearance before first paint to avoid a theme flash.
+      (() => {
+        try {
+          const stored = localStorage.getItem('cadence.theme');
+          const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          const resolved =
+            stored === 'light' || stored === 'dark' ? stored : systemDark ? 'dark' : 'light';
+          document.documentElement.dataset.theme = resolved;
+          document.documentElement.style.colorScheme = resolved;
+        } catch {
+          document.documentElement.dataset.theme = 'dark';
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
