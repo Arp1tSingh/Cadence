@@ -16,13 +16,17 @@ The core implementation is complete across five milestones:
 
 See [AGENTS.md](./AGENTS.md) for the engineering guide, architecture, and current progress.
 
-## Live Demo
+## Deployment
 
-**https://arp1tsingh.github.io/Cadence/**
+Cadence is a static Vite SPA with no server-side code. Import the repository at [vercel.com/new](https://vercel.com/new) or run:
 
-The demo is deployed to GitHub Pages by [`.github/workflows/deploy-pages.yml`](./.github/workflows/deploy-pages.yml) on every push to `main`.
+```bash
+npx vercel --prod
+```
 
-GitHub Pages cannot send custom response headers, so the Pages build runs without cross-origin isolation: ONNX Runtime Web falls back to a single WASM thread. The app is fully functional there, just slower to synthesize than a threaded deployment. Hosts that can set headers (Netlify and Vercel configs are included) get shared-memory threads automatically.
+No environment variables are required. [`vercel.json`](./vercel.json) pins the install (`npm ci`), build (`npm run build`), and output (`dist`) settings, and sends COOP/COEP headers so the deployed app is cross-origin isolated and can use multi-threaded WASM. Hosts that cannot set those headers still work with a single WASM thread, just slower. A Netlify config is included for parity.
+
+For a deployment served from a subpath, set `VITE_BASE` at build time (for example `VITE_BASE=/cadence/`).
 
 ## Tech Stack
 

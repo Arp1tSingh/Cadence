@@ -39,8 +39,7 @@ export type PdfParseOptions = {
 
 type RawPdfInfo = Record<string, unknown>;
 
-// Resolve against the deployment base so the app also works from a project
-// subpath such as GitHub Pages' `/Cadence/`.
+// Resolve against the deployment base so subpath hosting also works.
 const ASSET_BASE = import.meta.env.BASE_URL;
 const CMAP_URL = `${ASSET_BASE}pdfjs/cmaps/`;
 const STANDARD_FONTS_URL = `${ASSET_BASE}pdfjs/standard_fonts/`;

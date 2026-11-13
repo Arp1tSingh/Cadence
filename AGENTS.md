@@ -146,9 +146,10 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 
 ## Browser and Deployment Constraints
 
-- COOP/COEP headers are required for threaded WASM/SharedArrayBuffer. Configure Vite dev/preview and deployment files (Cloudflare Pages/Netlify/Vercel).
-- The live deployment is GitHub Pages at `https://arp1tsingh.github.io/Cadence/`, built with `VITE_BASE=/Cadence/` by `.github/workflows/deploy-pages.yml`. Pages cannot set response headers, so it runs without cross-origin isolation and ONNX Runtime Web uses one WASM thread. This fallback has been verified end-to-end; see the deployment entry in the progress log. Local dev/preview and the Netlify/Vercel configs remain cross-origin isolated.
-- All runtime asset URLs (`wasm/`, `pdfjs/`, `voices/`, bundled workers) must resolve through `import.meta.env.BASE_URL`; do not hardcode leading-slash paths.
+- COOP/COEP headers are required for threaded WASM/SharedArrayBuffer. Vite dev/preview and `vercel.json` set them; the Netlify config is kept for parity.
+- The deployment target is Vercel. `vercel.json` installs with `npm ci`, builds with `npm run build`, serves `dist/`, and sends COOP/COEP headers on every route. No environment variables or server functions are required. Vercel is not connected to the repository yet (this machine has no Vercel credentials).
+- GitHub Pages was retired because it cannot set COOP/COEP, which limits ONNX Runtime Web to one WASM thread. No Cadence feature is unavailable there; only threaded inference is lost. Pages also cannot rewrite routes, but Cadence has no client-side routes.
+- All runtime asset URLs (`wasm/`, `pdfjs/`, `voices/`, bundled workers) must resolve through `import.meta.env.BASE_URL`; do not hardcode leading-slash paths. `VITE_BASE` supports subpath deployments.
 - WebGPU is optional. Fall back to WASM `q8`.
 - WebCodecs AAC is optional. Fall back to MP3.
 - `showSaveFilePicker` is optional. Fall back to OPFS temp + blob download.
@@ -170,8 +171,9 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 - Settings QA (fresh Edge profile, synthetic 1-chapter/3-sentence book): model tier, lexicon entry, and citation/URL rules persisted across reloads. Default-profile audio read `0 of 1 fully cached` under the new speech profile; re-seeding the respelled cache with `speechKey 7d177ad4` read `1 of 1 fully cached`. Playback used the seeded respelled cache and stayed at 6 entries (no new inference). A 512 MB cap reclaimed 7 oldest-first entries and left 2; clear-all left 0; zero console/page errors.
 - Measured on the QA laptop (i5-8265U, 15 W, 4 threads): Kokoro q8 WASM runs at roughly **0.2× real time** (3.7 s of audio in ~19–25 s), and fp32 WASM is not faster. Threading scales only ~1.1×. The UI now labels this state instead of showing an indefinite spinner.
 - `npm run typecheck && npm run lint && npm run test && npm run build` passes (21 files, 146 tests, zero lint warnings).
-- **Deployed.** GitHub Pages workflow `.github/workflows/deploy-pages.yml` lints, tests, and builds with `VITE_BASE=/Cadence/`, then publishes `dist/` to `https://arp1tsingh.github.io/Cadence/`. PDF.js CMap/font URLs now derive from `import.meta.env.BASE_URL`. Live checks: HTML and `/Cadence/`-prefixed JS/CSS, 21.6 MB ORT WASM, voice `.bin`, and PDF fonts all return 200; Pages sends no COOP/COEP. Live Edge QA (`playwright-core`, fresh profile) reported `crossOriginIsolated: false`, loaded the q8 model and played from a seeded OPFS cache to 0.5 s in 33 s (cold model download), left the cache at one entry (no re-synthesis), and logged zero console/page errors. A local no-isolation smoke test matched these results.
-- Next: cross-browser QA sweep (Safari/iOS gesture and safe-area behavior, Firefox WASM fallback), and a large-library storage stress pass.
+- **Vercel-ready, not yet deployed.** `vercel.json` pins `npm ci` / `npm run build` / `dist` and sends COOP/COEP + CORP on every route, so Vercel builds are cross-origin isolated and ONNX Runtime Web can use multiple WASM threads. Hashed assets are cached immutably; ORT WASM, PDF.js assets, and voices are cached for seven days. No environment variables or server functions are needed. Verified with a root-base production build and a preview server carrying the same headers: `crossOriginIsolated: true` and zero console errors.
+- **GitHub Pages retired.** The Pages workflow was removed, the site was disabled through the API, and the repository homepage was cleared. Pages could not set COOP/COEP, so it ran with a single WASM thread; the app was fully functional there, but every feature except threaded inference is also available on Vercel with better performance. The Pages URL is expected to return 404 now.
+- Next: connect the repository to Vercel (import at `vercel.com/new` or run `npx vercel --prod`), then verify the deployed URL and set it as the repository homepage. After that: cross-browser QA sweep (Safari/iOS gesture and safe-area behavior, Firefox WASM fallback), and a large-library storage stress pass.
 
 
 ## Phase Tracker
@@ -260,6 +262,13 @@ Add one dated entry per milestone. Keep entries short: what changed, what passed
 - Enabled Pages (`build_type: workflow`) and set the repository homepage. Run 43417672054 built and deployed successfully; live HTML, entry JS/CSS, ORT WASM (21,596,019 B), `voices/af_heart.bin`, and PDF standard fonts return 200.
 - Live Edge QA against `https://arp1tsingh.github.io/Cadence/` (fresh profile): `crossOriginIsolated: false`, cold model load plus playback to 0.5 s in 33 s, cache stayed at one entry, zero console/page errors.
 - Verified: typecheck, lint (0 warnings), 21 test files / 146 tests, production build with `/Cadence/` base (favicon, entry assets, PDF CMaps, ORT WASM all prefixed correctly).
+
+### 2026-11-13 — Vercel prep, GitHub Pages retired
+- Expanded `vercel.json`: Vite framework, `npm ci`, `npm run build`, `dist`, COOP/COEP + CORP on every route, immutable caching for hashed assets, and seven-day caching for `/wasm`, `/pdfjs`, and `/voices`.
+- Replaced the Pages deployment workflow with CI-only `.github/workflows/ci.yml` (lint, test, build) so pushes and PRs still get verified without publishing anywhere.
+- Removed Pages-specific docs and base comments; README now documents Vercel setup and `VITE_BASE` for subpath hosts. `VITE_BASE` support remains available.
+- Disabled the GitHub Pages site via the API and cleared the repository homepage; confirmed the app has no feature-level dependency on cross-origin isolation (only the ORT WASM thread count).
+- Verified: root-base production build, preview headers (`crossOriginIsolated: true`), typecheck, lint (0 warnings), and the full test suite.
 
 ## Context-Management Protocol
 
