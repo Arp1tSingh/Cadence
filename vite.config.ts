@@ -11,6 +11,9 @@ const isolationHeaders = {
 };
 
 export default defineConfig({
+  // GitHub Pages serves project sites from `/<repo>/`. The deploy workflow
+  // sets VITE_BASE; local dev and root-hosted deploys keep `/`.
+  base: process.env.VITE_BASE ?? '/',
   plugins: [
     react(),
     tailwindcss(),

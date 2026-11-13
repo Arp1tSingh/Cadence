@@ -39,8 +39,11 @@ export type PdfParseOptions = {
 
 type RawPdfInfo = Record<string, unknown>;
 
-const CMAP_URL = '/pdfjs/cmaps/';
-const STANDARD_FONTS_URL = '/pdfjs/standard_fonts/';
+// Resolve against the deployment base so the app also works from a project
+// subpath such as GitHub Pages' `/Cadence/`.
+const ASSET_BASE = import.meta.env.BASE_URL;
+const CMAP_URL = `${ASSET_BASE}pdfjs/cmaps/`;
+const STANDARD_FONTS_URL = `${ASSET_BASE}pdfjs/standard_fonts/`;
 
 function cleanPdfText(value: unknown): string {
   return typeof value === 'string' ? normalizeWhitespace(value) : '';

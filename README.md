@@ -16,6 +16,14 @@ The core implementation is complete across five milestones:
 
 See [AGENTS.md](./AGENTS.md) for the engineering guide, architecture, and current progress.
 
+## Live Demo
+
+**https://arp1tsingh.github.io/Cadence/**
+
+The demo is deployed to GitHub Pages by [`.github/workflows/deploy-pages.yml`](./.github/workflows/deploy-pages.yml) on every push to `main`.
+
+GitHub Pages cannot send custom response headers, so the Pages build runs without cross-origin isolation: ONNX Runtime Web falls back to a single WASM thread. The app is fully functional there, just slower to synthesize than a threaded deployment. Hosts that can set headers (Netlify and Vercel configs are included) get shared-memory threads automatically.
+
 ## Tech Stack
 
 - Vite 7, React 19, TypeScript 5.9
@@ -35,7 +43,7 @@ npm install
 npm run dev
 ```
 
-The app requires cross-origin isolation for threaded WASM. The dev and preview servers set the necessary headers. See [AGENTS.md](./AGENTS.md) for deployment notes.
+The app requires cross-origin isolation for threaded WASM. The dev and preview servers set the necessary headers. Without them the app still runs with a single WASM thread. See [AGENTS.md](./AGENTS.md) for deployment notes.
 
 ## Privacy
 

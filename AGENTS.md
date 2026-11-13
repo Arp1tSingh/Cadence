@@ -147,7 +147,8 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 ## Browser and Deployment Constraints
 
 - COOP/COEP headers are required for threaded WASM/SharedArrayBuffer. Configure Vite dev/preview and deployment files (Cloudflare Pages/Netlify/Vercel).
-- GitHub Pages cannot set headers; document the single-thread fallback.
+- The live deployment is GitHub Pages at `https://arp1tsingh.github.io/Cadence/`, built with `VITE_BASE=/Cadence/` by `.github/workflows/deploy-pages.yml`. Pages cannot set response headers, so it runs without cross-origin isolation and ONNX Runtime Web uses one WASM thread. This fallback has been verified end-to-end; see the deployment entry in the progress log. Local dev/preview and the Netlify/Vercel configs remain cross-origin isolated.
+- All runtime asset URLs (`wasm/`, `pdfjs/`, `voices/`, bundled workers) must resolve through `import.meta.env.BASE_URL`; do not hardcode leading-slash paths.
 - WebGPU is optional. Fall back to WASM `q8`.
 - WebCodecs AAC is optional. Fall back to MP3.
 - `showSaveFilePicker` is optional. Fall back to OPFS temp + blob download.
@@ -169,7 +170,8 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 - Settings QA (fresh Edge profile, synthetic 1-chapter/3-sentence book): model tier, lexicon entry, and citation/URL rules persisted across reloads. Default-profile audio read `0 of 1 fully cached` under the new speech profile; re-seeding the respelled cache with `speechKey 7d177ad4` read `1 of 1 fully cached`. Playback used the seeded respelled cache and stayed at 6 entries (no new inference). A 512 MB cap reclaimed 7 oldest-first entries and left 2; clear-all left 0; zero console/page errors.
 - Measured on the QA laptop (i5-8265U, 15 W, 4 threads): Kokoro q8 WASM runs at roughly **0.2× real time** (3.7 s of audio in ~19–25 s), and fp32 WASM is not faster. Threading scales only ~1.1×. The UI now labels this state instead of showing an indefinite spinner.
 - `npm run typecheck && npm run lint && npm run test && npm run build` passes (21 files, 146 tests, zero lint warnings).
-- Next: cross-browser QA sweep (Safari/iOS gesture and safe-area behavior, Firefox WASM fallback), GitHub Pages single-thread documentation, and a large-library storage stress pass.
+- **Deployed.** GitHub Pages workflow `.github/workflows/deploy-pages.yml` lints, tests, and builds with `VITE_BASE=/Cadence/`, then publishes `dist/` to `https://arp1tsingh.github.io/Cadence/`. PDF.js CMap/font URLs now derive from `import.meta.env.BASE_URL`. A local no-isolation smoke test (Edge, `playwright-core`) confirmed `crossOriginIsolated: false`, q8 model load, playback from a seeded OPFS cache, unchanged cache count (no re-synthesis), and zero console errors.
+- Next: cross-browser QA sweep (Safari/iOS gesture and safe-area behavior, Firefox WASM fallback), and a large-library storage stress pass.
 
 
 ## Phase Tracker
@@ -249,6 +251,13 @@ Add one dated entry per milestone. Keep entries short: what changed, what passed
 - Real-browser QA (fresh Edge profile, synthetic 1-chapter/3-sentence book): tier/lexicon/rules persisted across reloads; default cache read `0 of 1 fully cached`, seeded `speechKey 7d177ad4` read `1 of 1 fully cached`; playback advanced to 0.5 s from the seeded cache and stayed at 6 entries (no new inference); a 512 MB cap reclaimed 7 oldest-first entries leaving 2; clear-all left 0; no console or page errors.
 - Known limitation: replacements are respellings, not IPA. The bundled `phonemizer` only emits IPA and espeak's `[[...]]` phoneme input is unavailable, so users spell the sound (`Her-my-oh-nee`).
 - Verified: 21 test files / 146 tests, typecheck, lint (0 warnings), production build.
+
+### 2026-11-13 — GitHub Pages deployment
+- Added `.github/workflows/deploy-pages.yml`: Node 24, `npm ci`, lint, test, build with `VITE_BASE=/Cadence/`, then `configure-pages`/`upload-pages-artifact`/`deploy-pages` on every push to `main`.
+- `vite.config.ts` now takes `base` from `VITE_BASE` (default `/`), and PDF.js CMap/standard-font URLs derive from `import.meta.env.BASE_URL` instead of hardcoded roots.
+- Local no-isolation smoke test (Edge, `playwright-core`, static server without COOP/COEP to mirror Pages): `crossOriginIsolated: false`, q8 model loaded, seeded OPFS cache played from 0 to 0.5 s in 16 s on a warm profile, cache stayed at one entry (no re-synthesis), zero console/page errors.
+- README now links the live demo and states the single-thread Pages limitation; AGENTS records the base-URL rule.
+- Verified: typecheck, lint (0 warnings), 21 test files / 146 tests, production build with `/Cadence/` base (favicon, entry assets, PDF CMaps, ORT WASM all prefixed correctly).
 
 ## Context-Management Protocol
 
