@@ -6,7 +6,7 @@ Cadence turns `.epub` and `.pdf` books into studio-quality audiobooks directly i
 
 ## Status
 
-All five milestones are complete:
+The core implementation is complete across five milestones:
 
 1. ✅ Scaffold and Apple-inspired design system
 2. ✅ EPUB/PDF ingestion, normalization, and bookshelf

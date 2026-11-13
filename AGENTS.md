@@ -262,11 +262,11 @@ This project is large; protect context deliberately:
    - §4.3 Live Lyrics sync
    - §4.4 export pipeline
    - §5 UI specification
-6. Record new decisions, API gotchas, and failed approaches in this file immediately.
-7. Update **Current Status**, **Phase Tracker**, and **Progress Log** before ending a session.
-8. Before claiming completion, run the full verification command set.
-9. Commit and push at every coherent milestone. Do not leave the working tree dirty at the end of a session.
-10. When unsure about a package API, inspect the installed types under `node_modules` or the package README instead of guessing.
+4. Record new decisions, API gotchas, and failed approaches in this file immediately.
+5. Update **Current Status**, **Phase Tracker**, and **Progress Log** before ending a session.
+6. Before claiming completion, run the full verification command set.
+7. Commit and push at every coherent milestone. Do not leave the working tree dirty at the end of a session.
+8. When unsure about a package API, inspect the installed types under `node_modules` or the package README instead of guessing.
 
 ## Commit and Push Protocol
 
