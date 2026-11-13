@@ -208,8 +208,9 @@ export async function deleteBookBlobs(bookId: string): Promise<void> {
   await opfs.removeDir(CACHE_DIR, bookId);
 }
 
-export async function clearAudioCache(bookId: string): Promise<void> {
-  await opfs.removeDir(CACHE_DIR, bookId);
+/** Drops every rendered sentence for every book; model/voices are untouched. */
+export async function clearAllAudioCacheFiles(): Promise<void> {
+  await opfs.removeDir(CACHE_DIR);
 }
 
 export const audioCacheSegments = (

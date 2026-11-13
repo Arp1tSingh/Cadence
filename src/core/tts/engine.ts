@@ -286,6 +286,16 @@ export async function ensureModel(
   tier: ModelTier,
   onProgress?: (progress: ModelLoadProgress) => void,
 ): Promise<ModelInfo> {
+  // A tier switch must actually swap the ONNX session; otherwise the settings
+  // toggle would appear to work but keep narrating with the old model.
+  if (loading) await loading.catch(() => undefined);
+
+  if (engine && engine.tier !== tier) {
+    const previous = engine;
+    engine = null;
+    await previous.tts.model.dispose().catch(() => undefined);
+  }
+
   if (engine) {
     return {
       device: engine.device,
@@ -295,18 +305,16 @@ export async function ensureModel(
     };
   }
 
-  if (!loading) {
-    loading = loadEngine(tier, onProgress)
-      .then((loaded) => {
-        engine = loaded;
-        return loaded;
-      })
-      .catch((error: unknown) => {
-        // Allow a retry after a failed download or unsupported device.
-        loading = null;
-        throw error;
-      });
-  }
+  loading = loadEngine(tier, onProgress)
+    .then((loaded) => {
+      engine = loaded;
+      return loaded;
+    })
+    .catch((error: unknown) => {
+      // Allow a retry after a failed download or unsupported device.
+      loading = null;
+      throw error;
+    });
 
   const loaded = await loading;
   return {
@@ -373,7 +381,16 @@ async function synthesizeWords(
   audio.set(waveform);
   const duration = audio.length / SAMPLE_RATE;
 
-  return { audio, timings: alignWords(words, duration) };
+  return {
+    audio,
+    timings: alignWords(
+      words.map((word) => ({
+        id: word.id,
+        text: sentenceText.slice(word.ttsStart, word.ttsEnd),
+      })),
+      duration,
+    ),
+  };
 }
 
 function mergePieces(pieces: Piece[]): Piece {

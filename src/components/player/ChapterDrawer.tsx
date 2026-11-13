@@ -7,6 +7,7 @@ import {
   readChapterCacheStats,
   type ChapterCacheStat,
 } from '@/core/tts/cacheStats';
+import { speechProfileKey } from '@/core/tts/speechProfile';
 import { voiceLabelFor } from '@/core/tts/voices';
 import { usePlayerStore } from '@/store/playerStore';
 import { useSettingsStore } from '@/store/settingsStore';
@@ -35,6 +36,12 @@ export function ChapterDrawer({
   onSelect,
 }: ChapterDrawerProps) {
   const voice = useSettingsStore((state) => state.voice);
+  const lexicon = useSettingsStore((state) => state.lexicon);
+  const rules = useSettingsStore((state) => state.normalizationRules);
+  const speechKey = useMemo(
+    () => speechProfileKey({ lexicon, rules }),
+    [lexicon, rules],
+  );
   const status = usePlayerStore((state) => state.snapshot.status);
   const [stats, setStats] = useState<Map<number, ChapterCacheStat>>(() => new Map());
 
@@ -43,7 +50,7 @@ export function ChapterDrawer({
     let cancelled = false;
 
     const refresh = () => {
-      void readChapterCacheStats(book, voice).then((next) => {
+      void readChapterCacheStats(book, voice, speechKey).then((next) => {
         if (!cancelled) setStats(next);
       });
     };
@@ -54,7 +61,7 @@ export function ChapterDrawer({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [book, open, voice]);
+  }, [book, open, speechKey, voice]);
 
   const completeChapters = useMemo(() => {
     let count = 0;

@@ -261,18 +261,31 @@ const SPEECH_ABBREVIATIONS: Record<string, string> = {
   'rd.': 'Road',
 };
 
+export type SpeechExpansionOptions = {
+  /**
+   * Expands titles, units, and initials (`Dr.`, `Ch.`, `U.S.`). Number and
+   * symbol expansion is always on: reading digits as digits is never better.
+   */
+  abbreviations?: boolean;
+};
+
 /**
  * Expands a single display token into the text that should be spoken.
  * Display text is never modified; this is only used to build TTS spans.
  */
-export function expandTokenForSpeech(token: string): string {
+export function expandTokenForSpeech(
+  token: string,
+  options: SpeechExpansionOptions = {},
+): string {
   if (!token) return token;
 
-  const abbreviation = SPEECH_ABBREVIATIONS[token.toLowerCase()];
-  if (abbreviation) return abbreviation;
+  if (options.abbreviations !== false) {
+    const abbreviation = SPEECH_ABBREVIATIONS[token.toLowerCase()];
+    if (abbreviation) return abbreviation;
 
-  if (/^(?:[A-Z]\.){2,}$/.test(token)) {
-    return token.replaceAll('.', ' ').trim().split(/\s+/).join(' ');
+    if (/^(?:[A-Z]\.){2,}$/.test(token)) {
+      return token.replaceAll('.', ' ').trim().split(/\s+/).join(' ');
+    }
   }
 
   if (token === '&') return 'and';

@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import type { BookDocument, ExportJobRecord } from '@/types/domain';
 import type { ExportFormat, ExportProbe, ExportScope } from '@/types/export';
+import type { SpeechProfile } from '@/types/speech';
+import type { ModelTier, VoiceSelection } from '@/types/tts';
 import { deleteExportJob, listExportJobs, putExportJob } from '@/core/storage/db';
 import { exportSegments, opfs } from '@/core/storage/opfs';
 import { exporter } from '@/core/workers/exporterClient';
@@ -13,7 +15,7 @@ import { voiceKeyFor } from '@/core/tts/voices';
 import { isJobCancelled } from '@/core/tts/cancel';
 import { formatClock } from '@/lib/time';
 import { formatBytes } from '@/lib/format';
-import { useSettingsStore } from './settingsStore';
+import { activeSpeechProfile, useSettingsStore } from './settingsStore';
 
 export type ExportPhase =
   | 'idle'
@@ -35,6 +37,10 @@ type Runtime = {
   token: number;
   job: ExportJobRecord;
   book: BookDocument;
+  voice: VoiceSelection;
+  speech: SpeechProfile;
+  cacheCapBytes: number;
+  tier: ModelTier;
   paused: boolean;
   cancelled: boolean;
   resumed: (() => void) | null;
@@ -57,24 +63,26 @@ async function persistJob(job: ExportJobRecord, force = false): Promise<void> {
 }
 
 async function ensureCachedWithRetry(
-  job: ExportJobRecord,
+  active: Runtime,
   sentence: ExportPlan['chapters'][number]['sentences'][number],
-  cancelled: () => boolean,
 ) {
-  const voice = useSettingsStore.getState().voice;
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await ensureSentenceCached({
-        bookId: job.bookId,
-        voice,
+        bookId: active.job.bookId,
+        voice: active.voice,
         sentence,
         priority: 'prefetch',
-        tier: useSettingsStore.getState().modelTier,
+        tier: active.tier,
+        // Capture the speech profile and cap for the whole job so a settings
+        // change mid-export cannot mix two renderings in one file.
+        speech: active.speech,
+        cacheCapBytes: active.cacheCapBytes,
       });
     } catch (error) {
       // Playback pauses/seeks call cancelPending(), which drops queued export
       // work too. That is expected; re-queue unless the export itself stopped.
-      if (!isJobCancelled(error) || cancelled() || attempt >= 8) throw error;
+      if (!isJobCancelled(error) || active.cancelled || attempt >= 8) throw error;
       await sleep(80 * (attempt + 1));
     }
   }
@@ -185,7 +193,7 @@ export const useExportStore = create<ExportState>()(
               state.message = `Narrating ${completed + 1} of ${total}`;
             });
 
-            const cached = await ensureCachedWithRetry(job, sentence, () => active.cancelled);
+            const cached = await ensureCachedWithRetry(active, sentence);
             if (active.cancelled) return;
 
             set((state) => {
@@ -356,6 +364,7 @@ export const useExportStore = create<ExportState>()(
         }
 
         const voice = useSettingsStore.getState().voice;
+        const speech = activeSpeechProfile();
         const id = crypto.randomUUID();
         const suggestedName = suggestedExportName(plan, options.format);
         const chapter =
@@ -393,6 +402,10 @@ export const useExportStore = create<ExportState>()(
           token: (nextToken += 1),
           job,
           book,
+          voice,
+          speech,
+          cacheCapBytes: useSettingsStore.getState().cacheCapBytes,
+          tier: useSettingsStore.getState().modelTier,
           paused: false,
           cancelled: false,
           resumed: null,

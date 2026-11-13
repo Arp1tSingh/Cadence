@@ -6,13 +6,13 @@ Cadence turns `.epub` and `.pdf` books into studio-quality audiobooks directly i
 
 ## Status
 
-Early development. The first four milestones are complete:
+All five milestones are complete:
 
 1. ✅ Scaffold and Apple-inspired design system
 2. ✅ EPUB/PDF ingestion, normalization, and bookshelf
 3. ✅ Local Kokoro TTS, OPFS caching, and gapless playback
 4. ✅ Word-synced Live Lyrics, Book Page mode, voice blending, and speed control
-5. 🚧 MP3/M4B export (studio complete), lexicon, normalization rules, and polish
+5. ✅ MP3/M4B export, pronunciation lexicon, normalization rules, model tiers, and cache management
 
 See [AGENTS.md](./AGENTS.md) for the engineering guide, architecture, and current progress.
 

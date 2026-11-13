@@ -4,7 +4,7 @@ import { immer } from 'zustand/middleware/immer';
 import type { BookDocument } from '@/types/domain';
 import type { PlayerFrame, PlayerSnapshot } from '@/core/player/session';
 import { playerSession } from '@/core/player/session';
-import { useSettingsStore } from './settingsStore';
+import { activeSpeechProfile, useSettingsStore } from './settingsStore';
 
 export const EMPTY_PLAYER_SNAPSHOT: PlayerSnapshot = {
   bookId: null,
@@ -54,6 +54,8 @@ export const usePlayerStore = create<PlayerState>()(
         tier: settings.modelTier,
         volume: settings.volume,
         rate: settings.playbackRate,
+        speech: activeSpeechProfile(settings),
+        cacheCapBytes: settings.cacheCapBytes,
       });
       set((state) => {
         state.snapshot = playerSession.getSnapshot();
@@ -106,6 +108,23 @@ export const usePlayerStore = create<PlayerState>()(
 
 playerSession.subscribe(() => {
   usePlayerStore.setState({ snapshot: playerSession.getSnapshot() });
+});
+
+/**
+ * Settings can change from the library or the player, so the session follows
+ * the store instead of relying on each sheet to call the right method.
+ */
+useSettingsStore.subscribe((state, previous) => {
+  if (state.modelTier !== previous.modelTier) playerSession.setTier(state.modelTier);
+  if (state.cacheCapBytes !== previous.cacheCapBytes) {
+    playerSession.setCacheCap(state.cacheCapBytes);
+  }
+  if (
+    state.lexicon !== previous.lexicon ||
+    state.normalizationRules !== previous.normalizationRules
+  ) {
+    playerSession.setSpeech(activeSpeechProfile(state));
+  }
 });
 
 export function usePlayerFrame(listener: (frame: PlayerFrame) => void): void {

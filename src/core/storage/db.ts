@@ -146,6 +146,11 @@ export async function listAudioCacheForBook(bookId: string): Promise<AudioCacheE
   return db.getAllFromIndex('audioCache', 'byBook', bookId);
 }
 
+export async function listAllAudioCacheEntries(): Promise<AudioCacheEntry[]> {
+  const db = await getDb();
+  return db.getAll('audioCache');
+}
+
 export async function getAudioCacheEntry(key: string): Promise<AudioCacheEntry | undefined> {
   const db = await getDb();
   return db.get('audioCache', key);
@@ -168,6 +173,11 @@ export async function clearAudioCacheIndex(bookId: string): Promise<void> {
   const keys = await store.index('byBook').getAllKeys(bookId);
   for (const key of keys) await store.delete(key);
   await transaction.done;
+}
+
+export async function clearAllAudioCacheIndex(): Promise<void> {
+  const db = await getDb();
+  await db.clear('audioCache');
 }
 
 export async function listExportJobs(bookId?: string): Promise<ExportJobRecord[]> {

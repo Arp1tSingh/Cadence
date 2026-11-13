@@ -52,6 +52,32 @@ describe('alignWords', () => {
     const timings = alignWords(words, 1);
     expect(timings.map((timing) => timing.wordId)).toEqual(words.map((word) => word.id));
   });
+
+  it('gives a silently skipped span no time', () => {
+    const timings = alignWords(
+      [
+        { id: 'w1', text: 'Hello' },
+        { id: 'w2', text: '' },
+        { id: 'w3', text: 'world' },
+      ],
+      2,
+    );
+    expect(timings[1].start).toBe(timings[1].end);
+    expect(timings[2].end).toBeCloseTo(2, 6);
+  });
+
+  it('gives the remainder to the last spoken word, not a trailing skip', () => {
+    const timings = alignWords(
+      [
+        { id: 'w1', text: 'Hello' },
+        { id: 'w2', text: 'there' },
+        { id: 'w3', text: '' },
+      ],
+      2,
+    );
+    expect(timings[1].end).toBeCloseTo(2, 6);
+    expect(timings[2].start).toBeCloseTo(2, 6);
+  });
 });
 
 describe('offsetTimings', () => {

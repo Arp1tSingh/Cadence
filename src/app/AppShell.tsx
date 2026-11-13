@@ -1,10 +1,11 @@
-import { AlertTriangle, Moon, Plus, ShieldCheck, Sun } from 'lucide-react';
+import { AlertTriangle, Moon, Plus, Settings2, ShieldCheck, Sun } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DropOverlay } from '@/components/bookshelf/WindowDropzone';
 import { EmptyLibrary } from '@/components/bookshelf/EmptyLibrary';
 import { ImportSheet } from '@/components/bookshelf/ImportSheet';
 import { LibraryView } from '@/components/bookshelf/LibraryView';
 import { ExportStudio } from '@/components/modals/ExportStudio';
+import { SettingsSheet } from '@/components/modals/SettingsSheet';
 import { MeshBackdrop } from '@/components/player/MeshBackdrop';
 import { PlayerView } from '@/components/player/PlayerView';
 import { Button } from '@/components/ui/Button';
@@ -65,6 +66,7 @@ export function AppShell() {
   const playerBookId = usePlayerStore((state) => state.bookId);
   const openBook = usePlayerStore((state) => state.openBook);
   const closePlayer = usePlayerStore((state) => state.closePlayer);
+  const openSettings = useSettingsStore((state) => state.openSettings);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const [importOpen, setImportOpen] = useState(false);
@@ -136,6 +138,14 @@ export function AppShell() {
             </Button>
 
             <IconButton
+              label="Open settings"
+              onClick={() => openSettings()}
+              variant="secondary"
+            >
+              <Settings2 size={17} />
+            </IconButton>
+
+            <IconButton
               label={`Switch to ${resolved === 'dark' ? 'light' : 'dark'} appearance`}
               onClick={toggle}
               variant="secondary"
@@ -185,6 +195,7 @@ export function AppShell() {
 
       <ImportSheet open={importOpen} onClose={() => setImportOpen(false)} />
       <ExportStudio />
+      <SettingsSheet />
       <DropOverlay active={dragging} />
     </div>
   );

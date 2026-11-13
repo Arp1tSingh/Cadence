@@ -1,4 +1,5 @@
 import type { SentenceNode, WordTiming } from './domain';
+import type { SpeechProfile } from './speech';
 
 export type TtsDevice = 'webgpu' | 'wasm';
 export type TtsDtype = 'q8' | 'fp32';
@@ -55,6 +56,13 @@ export type SynthesisRequest = {
    * export path needs this; playback loads the model before requesting audio.
    */
   tier?: ModelTier;
+  /** Lexicon and normalization rules applied to the spoken text. */
+  speech?: SpeechProfile;
+  /**
+   * Soft size limit for the PCM cache. The worker evicts the oldest entries
+   * after a batch of writes; zero or negative means unlimited.
+   */
+  cacheCapBytes?: number;
 };
 
 export type SynthesizedSentence = {

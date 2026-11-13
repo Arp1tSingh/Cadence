@@ -253,6 +253,40 @@ export type BuildSentenceParams = {
   text: string;
 };
 
+export type SpokenWordSeed = Pick<WordToken, 'id' | 'text' | 'isWord'>;
+
+/**
+ * Rebuilds TTS spans and chunks from existing word ids and a parallel list of
+ * spoken strings. Used both by the parser (initial expansion) and by the
+ * pronunciation lexicon (re-expansion at synthesis time), so the two can never
+ * disagree about how spans and chunks are laid out.
+ */
+export function buildSpokenWords(
+  seeds: ReadonlyArray<SpokenWordSeed>,
+  spoken: ReadonlyArray<string>,
+): { words: WordToken[]; ttsText: string; chunks: TtsChunk[] } {
+  const words: WordToken[] = [];
+  const parts: string[] = [];
+  let ttsCursor = 0;
+
+  seeds.forEach((seed, index) => {
+    const expansion = (spoken[index] ?? '').trim();
+    const ttsStart = ttsCursor;
+    ttsCursor += expansion.length + (index < seeds.length - 1 ? 1 : 0);
+    parts.push(expansion);
+    words.push({
+      id: seed.id,
+      text: seed.text,
+      ttsStart,
+      ttsEnd: ttsStart + expansion.length,
+      isWord: seed.isWord,
+    });
+  });
+
+  const ttsText = parts.join(' ');
+  return { words, ttsText, chunks: buildTtsChunks(words, ttsText) };
+}
+
 export function buildSentence({
   chapterIndex,
   paragraphIndex,
@@ -261,25 +295,14 @@ export function buildSentence({
 }: BuildSentenceParams): SentenceNode {
   const displayText = normalizeBlockText(text);
   const tokens = tokenizeDisplayText(displayText);
-  const words: WordToken[] = [];
-  const spokenParts: string[] = [];
-  let ttsCursor = 0;
+  const spoken = tokens.map((token) => expandTokenForSpeech(token.text).trim() || token.text);
+  const seeds: SpokenWordSeed[] = tokens.map((token, index) => ({
+    id: wordId(index),
+    text: token.text,
+    isWord: /[\p{L}\p{N}]/u.test(token.text),
+  }));
+  const { words, ttsText, chunks } = buildSpokenWords(seeds, spoken);
 
-  tokens.forEach((token, index) => {
-    const expansion = expandTokenForSpeech(token.text).trim() || token.text;
-    const ttsStart = ttsCursor;
-    ttsCursor += expansion.length + (index < tokens.length - 1 ? 1 : 0);
-    spokenParts.push(expansion);
-    words.push({
-      id: wordId(index),
-      text: token.text,
-      ttsStart,
-      ttsEnd: ttsStart + expansion.length,
-      isWord: /[\p{L}\p{N}]/u.test(token.text),
-    });
-  });
-
-  const ttsText = spokenParts.join(' ');
   const wordCount = words.filter((word) => word.isWord).length;
   const sentencesId = sentenceId(chapterIndex, paragraphIndex, sentenceIndex);
 
@@ -291,7 +314,7 @@ export function buildSentence({
     displayText,
     ttsText,
     words,
-    chunks: buildTtsChunks(words, ttsText),
+    chunks,
     charCount: displayText.length,
     wordCount,
     estimatedDuration: estimateSentenceDuration(wordCount),

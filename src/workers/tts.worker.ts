@@ -13,14 +13,20 @@ import { SAMPLE_RATE } from '@/core/tts/constants';
 import { createJobCancelledError } from '@/core/tts/cancel';
 import { sentenceCacheKey } from '@/core/tts/cacheKey';
 import { readSentenceCache, writeSentenceCache } from '@/core/tts/audioCache';
+import { respellSentence } from '@/core/tts/respell';
+import { speechProfileKey } from '@/core/tts/speechProfile';
 import { ensureModel, synthesizeSentence } from '@/core/tts/engine';
+import type { SentenceNode } from '@/types/domain';
 
 type Priority = 'foreground' | 'prefetch';
 
 type JobBase = {
   request: SynthesisRequest;
+  /** Sentence after the lexicon/rules have been applied. */
+  sentence: SentenceNode;
   key: string;
   voiceKey: string;
+  speechKey: string;
   priority: Priority;
   cancelled: boolean;
 };
@@ -45,9 +51,10 @@ let running = false;
 let current: Job | null = null;
 
 async function runAudioJob(job: AudioJob): Promise<SynthesizedSentence> {
-  const { bookId, sentence } = job.request;
+  const { bookId } = job.request;
+  const { sentence } = job;
 
-  const cached = await readSentenceCache(bookId, job.voiceKey, job.key);
+  const cached = await readSentenceCache(bookId, job.voiceKey, job.key, job.speechKey);
   if (cached) {
     return {
       sentenceId: sentence.id,
@@ -76,6 +83,8 @@ async function runAudioJob(job: AudioJob): Promise<SynthesizedSentence> {
     chapterIndex: sentence.chapterIndex,
     audio: synthesized.audio,
     timings: synthesized.timings,
+    speechKey: job.speechKey,
+    cacheCapBytes: job.request.cacheCapBytes,
   });
 
   return synthesized;
@@ -87,9 +96,10 @@ async function runAudioJob(job: AudioJob): Promise<SynthesizedSentence> {
  * not stream gigabytes through the main thread.
  */
 async function runCacheJob(job: CacheJob): Promise<CachedSentenceInfo> {
-  const { bookId, sentence } = job.request;
+  const { bookId } = job.request;
+  const { sentence } = job;
 
-  const cached = await readSentenceCache(bookId, job.voiceKey, job.key);
+  const cached = await readSentenceCache(bookId, job.voiceKey, job.key, job.speechKey);
   if (cached) {
     return {
       cacheKey: job.key,
@@ -118,6 +128,8 @@ async function runCacheJob(job: CacheJob): Promise<CachedSentenceInfo> {
     chapterIndex: sentence.chapterIndex,
     audio: synthesized.audio,
     timings: synthesized.timings,
+    speechKey: job.speechKey,
+    cacheCapBytes: job.request.cacheCapBytes,
   });
 
   return {
@@ -175,6 +187,22 @@ function priorityOf(request: SynthesisRequest): Priority {
   return request.priority === 'prefetch' ? 'prefetch' : 'foreground';
 }
 
+/**
+ * Applies the active lexicon and normalization rules before the cache key is
+ * computed, so a pronunciation change is a natural cache miss and an unchanged
+ * profile returns the parser's original sentence (and therefore cache key).
+ */
+async function prepareJob(request: SynthesisRequest): Promise<{
+  sentence: SentenceNode;
+  key: string;
+  voiceKey: string;
+  speechKey: string;
+}> {
+  const sentence = respellSentence(request.sentence, request.speech);
+  const { key, voiceKey } = await sentenceCacheKey(sentence, request.voice);
+  return { sentence, key, voiceKey, speechKey: speechProfileKey(request.speech) };
+}
+
 const workerApi: TtsWorkerApi = {
   async ensureModel(
     request: ModelLoadRequest,
@@ -184,14 +212,16 @@ const workerApi: TtsWorkerApi = {
   },
 
   async synthesize(request: SynthesisRequest): Promise<SynthesizedSentence> {
-    const { key, voiceKey } = await sentenceCacheKey(request.sentence, request.voice);
+    const { sentence, key, voiceKey, speechKey } = await prepareJob(request);
 
     const result = await new Promise<SynthesizedSentence>((resolve, reject) => {
       enqueue({
         mode: 'audio',
         request,
+        sentence,
         key,
         voiceKey,
+        speechKey,
         priority: priorityOf(request),
         cancelled: false,
         resolve,
@@ -203,14 +233,16 @@ const workerApi: TtsWorkerApi = {
   },
 
   async ensureCached(request: SynthesisRequest): Promise<CachedSentenceInfo> {
-    const { key, voiceKey } = await sentenceCacheKey(request.sentence, request.voice);
+    const { sentence, key, voiceKey, speechKey } = await prepareJob(request);
 
     return new Promise<CachedSentenceInfo>((resolve, reject) => {
       enqueue({
         mode: 'cache',
         request,
+        sentence,
         key,
         voiceKey,
+        speechKey,
         // Export work never jumps ahead of playback.
         priority: 'prefetch',
         cancelled: false,
@@ -234,8 +266,8 @@ const workerApi: TtsWorkerApi = {
   },
 
   async isCached(request: SynthesisRequest): Promise<boolean> {
-    const { key, voiceKey } = await sentenceCacheKey(request.sentence, request.voice);
-    const cached = await readSentenceCache(request.bookId, voiceKey, key);
+    const { key, voiceKey, speechKey } = await prepareJob(request);
+    const cached = await readSentenceCache(request.bookId, voiceKey, key, speechKey);
     return cached !== null;
   },
 };

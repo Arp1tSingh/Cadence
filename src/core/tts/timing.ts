@@ -43,14 +43,32 @@ export function alignWords(
 ): WordTiming[] {
   if (words.length === 0 || !Number.isFinite(duration) || duration <= 0) return [];
 
-  const weights = words.map((word) => wordWeight(word.text));
+  // Empty spans belong to words the lexicon chose not to speak; they must not
+  // consume time on the word-sync timeline.
+  const weights = words.map((word) => (word.text.trim() ? wordWeight(word.text) : 0));
   const total = weights.reduce((sum, weight) => sum + weight, 0);
+  if (total <= 0) {
+    return words.map((word) => ({ wordId: word.id, start: 0, end: 0 }));
+  }
+
+  let lastSpoken = -1;
+  for (let index = words.length - 1; index >= 0; index -= 1) {
+    if (weights[index] > 0) {
+      lastSpoken = index;
+      break;
+    }
+  }
 
   const timings: WordTiming[] = [];
   let cursor = 0;
 
   words.forEach((word, index) => {
-    const isLast = index === words.length - 1;
+    if (weights[index] <= 0) {
+      timings.push({ wordId: word.id, start: cursor, end: cursor });
+      return;
+    }
+
+    const isLast = index === lastSpoken;
     const span = isLast ? duration - cursor : (weights[index] / total) * duration;
     const end = isLast ? duration : cursor + span;
     timings.push({ wordId: word.id, start: cursor, end });

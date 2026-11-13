@@ -1,4 +1,4 @@
-import { AlignCenter, BookOpenText, ChevronLeft, Download, ListMusic, Mic2, Play } from 'lucide-react';
+import { AlignCenter, BookOpenText, ChevronLeft, Download, ListMusic, Mic2, Play, Settings2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BookDocument } from '@/types/domain';
 import { usePlayerFrame, usePlayerStore } from '@/store/playerStore';
@@ -14,6 +14,7 @@ import { SpeedSheet } from './SpeedSheet';
 import { ModelSetup } from './ModelSetup';
 import { PlayerError } from './PlayerError';
 import { ExportStudio } from '@/components/modals/ExportStudio';
+import { SettingsSheet } from '@/components/modals/SettingsSheet';
 import { IconButton } from '@/components/ui/IconButton';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
@@ -34,6 +35,7 @@ export function PlayerView({ book }: PlayerViewProps) {
   const seekToSentence = usePlayerStore((state) => state.seekToSentence);
   const lyricsMode = useSettingsStore((state) => state.lyricsMode);
   const setLyricsMode = useSettingsStore((state) => state.setLyricsMode);
+  const openSettings = useSettingsStore((state) => state.openSettings);
   const openExport = useExportStore((state) => state.openStudio);
 
   const [chaptersOpen, setChaptersOpen] = useState(false);
@@ -172,6 +174,13 @@ export function PlayerView({ book }: PlayerViewProps) {
               <Download size={17} />
             </IconButton>
             <IconButton
+              label="Open settings"
+              onClick={() => openSettings()}
+              variant="ghost"
+            >
+              <Settings2 size={17} />
+            </IconButton>
+            <IconButton
               label="Open chapters"
               onClick={() => setChaptersOpen(true)}
               variant="ghost"
@@ -265,6 +274,7 @@ export function PlayerView({ book }: PlayerViewProps) {
       ) : null}
 
       <ExportStudio />
+      <SettingsSheet />
     </div>
   );
 }

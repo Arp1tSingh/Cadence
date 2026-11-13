@@ -5,6 +5,8 @@ import type {
   SynthesizedSentence,
   VoiceSelection,
 } from '@/types/tts';
+import type { SpeechProfile } from '@/types/speech';
+import { EMPTY_SPEECH_PROFILE } from '@/types/speech';
 import {
   getProgress,
   putProgress,
@@ -29,6 +31,7 @@ import {
 import { releaseWakeLock, requestWakeLock } from '@/core/audio/wakeLock';
 import { LOOKAHEAD_SENTENCES } from '@/core/tts/constants';
 import { isJobCancelled } from '@/core/tts/cancel';
+import { speechProfileKey } from '@/core/tts/speechProfile';
 import { wordIndexAt, wordProgressAt } from '@/core/tts/timing';
 import { normalizeVoiceSelection } from '@/core/tts/voices';
 
@@ -76,6 +79,10 @@ type OpenOptions = {
   volume?: number;
   /** Playback speed; audio is time-stretched without re-synthesis. */
   rate?: number;
+  /** Lexicon and normalization rules for synthesis. */
+  speech?: SpeechProfile;
+  /** Soft PCM cache cap in bytes; zero or negative means unlimited. */
+  cacheCapBytes?: number;
 };
 
 const EMPTY_SNAPSHOT: PlayerSnapshot = {
@@ -92,7 +99,7 @@ const EMPTY_SNAPSHOT: PlayerSnapshot = {
   durationSeconds: 0,
 };
 
-let modelEverLoaded = false;
+let loadedTier: ModelTier | null = null;
 
 export class PlayerSession {
   private book: BookDocument | null = null;
@@ -104,6 +111,9 @@ export class PlayerSession {
   private tier: ModelTier = 'auto';
   private playIntent = false;
   private rate = 1;
+  private speech: SpeechProfile = EMPTY_SPEECH_PROFILE;
+  private speechKey = speechProfileKey();
+  private cacheCapBytes = 0;
 
   private currentIndex = 0;
   private nextScheduleIndex = 0;
@@ -162,6 +172,9 @@ export class PlayerSession {
     this.voice = normalizeVoiceSelection(options.voice);
     this.tier = options.tier;
     this.rate = clampPlaybackRate(options.rate ?? 1);
+    this.speech = options.speech ?? EMPTY_SPEECH_PROFILE;
+    this.speechKey = speechProfileKey(this.speech);
+    this.cacheCapBytes = options.cacheCapBytes ?? 0;
     this.playIntent = false;
     this.error = null;
     this.modelProgress = null;
@@ -218,13 +231,13 @@ export class PlayerSession {
       return;
     }
 
-    if (!modelEverLoaded) {
+    if (loadedTier !== this.tier) {
       this.setStatus('preparing');
       this.modelProgress = null;
       this.emit();
       try {
         await ensureTtsModel(this.tier, (progress) => this.updateModelProgress(progress));
-        modelEverLoaded = true;
+        loadedTier = this.tier;
       } catch (error) {
         await contextReady;
         this.fail(error, 'The narration model could not start.');
@@ -328,6 +341,21 @@ export class PlayerSession {
 
   setTier(tier: ModelTier): void {
     this.tier = tier;
+  }
+
+  /** Applies new pronunciation settings; spoken text is cache-keyed, so the
+   * current sentence is re-requested at the new rendering. */
+  setSpeech(speech: SpeechProfile): void {
+    const key = speechProfileKey(speech);
+    this.speech = speech;
+    if (key === this.speechKey) return;
+    this.speechKey = key;
+    if (!this.book) return;
+    this.restartTimeline();
+  }
+
+  setCacheCap(capBytes: number): void {
+    this.cacheCapBytes = capBytes;
   }
 
   setVolume(volume: number): void {
@@ -474,6 +502,8 @@ export class PlayerSession {
       voice: this.voice,
       sentence: entry.sentence,
       priority,
+      speech: this.speech,
+      cacheCapBytes: this.cacheCapBytes,
     })
       .then(async (result) => {
         if (generation !== this.generation) return;

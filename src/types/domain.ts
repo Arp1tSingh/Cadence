@@ -111,6 +111,11 @@ export type AudioCacheEntry = {
   timings: WordTiming[];
   size: number;
   createdAt: number;
+  /**
+   * Fingerprint of the lexicon/rules that produced the spoken text. Entries
+   * written before speech settings existed omit it and are treated as default.
+   */
+  speechKey?: string;
 };
 
 export type ExportJobRecord = {

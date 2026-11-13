@@ -161,12 +161,16 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 - **Phase 1 — complete.** Domain schema, IndexedDB/OPFS storage, text normalization and speech expansion, sentence/word/chunk builder, EPUB parser (nav + NCX + heading-level splitting), PDF layout engine, palette extraction, parser worker/client, bookshelf, import sheet, window dropzones, and progress UI.
 - **Phase 2 — complete.** Kokoro TTS worker with a foreground/prefetch queue, OPFS Int16 audio cache keyed by engine version + voice + text hash, Web Audio scheduler, player session (lookahead, buffering, seek, chapter/voice restart), MediaSession and Wake Lock, settings/player stores, and the player UI (lyrics stage, glass dock, chapter drawer, voice sheet, model setup, error overlay).
 - **Phase 3 — complete.** Offline WSOLA time-stretching in `stretch.worker.ts` with a rate-aware session timeline and speed sheet; Book Page reader with memoized chapter paragraphs, imperative sentence/word sweep, auto-scroll plus resume pill, and tap-to-seek; per-chapter synthesis rings in the drawer; and a barycentric 3-voice style pad that blends two or three 256-float voice rows.
-- **Phase 4 — in progress (export done).** Export studio with streaming MP3 (LAME WASM) and M4B (AAC at 48 kHz via `AudioSampleSource` resampling) encodes; the exporter worker reads Int16 PCM straight from OPFS, writes through `StreamTarget` into an OPFS file, and patches Nero `chpl` into `moov/udta` after the moov lands at EOF. Cache-only `ensureCached()` synthesizes only on misses and loads the model lazily, so exporting already-listened audio never touches inference. Pause/resume/cancel, persisted job history, and streamed downloads are wired.
+- **Phase 4 — complete.** Export studio with streaming MP3 (LAME WASM) and M4B (AAC at 48 kHz via `AudioSampleSource` resampling) encodes; the exporter worker reads Int16 PCM straight from OPFS, writes through `StreamTarget` into an OPFS file, and patches Nero `chpl` into `moov/udta` after the moov lands at EOF. Cache-only `ensureCached()` synthesizes only on misses and loads the model lazily, so exporting already-listened audio never touches inference. Pause/resume/cancel, persisted job history, and streamed downloads are wired.
+- Settings and speech controls: one `SettingsSheet` (Narration / Pronunciation / Storage) reachable from the library and player headers. Narration covers the model tier (`balanced` q8 WASM, `quality` WebGPU fp32, `auto`), default narrator, and speed. Pronunciation applies a case-insensitive, longest-match lexicon (multi-word phrases, possessives, empty replacement = skip) plus abbreviation, citation, and URL normalization rules at synthesis time through pure `respellSentence()`, preserving display text, word ids, spans, and chunks. Storage shows rendered-audio usage and a soft cap (512 MB / 1 GB / 2 GB / 4 GB / Unlimited, oldest-first eviction) with a clear-all action.
+- Cache correctness: the key stays `TTS_ENGINE_VERSION + voiceKey + sentence.id + SHA-256(ttsText)`, so changed speech settings are a natural miss. `AudioCacheEntry.speechKey` (FNV-1a of the canonical profile) lets chapter rings ignore entries rendered under other settings; a hit is re-marked with the active key. Export captures voice, speech profile, cap, and tier at start so a mid-export settings change cannot mix renderings. A tier change reloads and disposes the previous ONNX session on the next narration start.
 - Real-browser QA (Edge, `playwright-core`): q8 WASM download (88 MB), model init, word-level playback, prefetch cache growth, pause/resume, next sentence, chapter jump, per-voice caching (`af_heart` + `bf_emma`), 1.5× WSOLA duration (52,082 s → 34,721 s), Book Page word sweep and tap seek, 76 chapter rows with cache rings, and a 3-voice blend cached under `af_heart+bf_emma-48+am_michael-47` with all three shares in the dock.
 - Export QA uses a synthetic two-chapter book with pre-seeded Int16 cache (45 tones): M4B whole-book → 865,332 B, 77.40 s, boxes `ftyp/mdat/moov`, moov at EOF, `chpl` marks at 0 s and 68.8 s, decodes to 77.42 s; MP3 chapter → 138,932 B, 8.60 s, decodes to 8.64 s; pause held the encoder, resume finished, cancel deleted the partial file, and three history rows persisted. Headless Edge has no AAC encoder; headed Edge encodes AAC at 44.1/48 kHz, not 24 kHz — hence the resample.
+- Settings QA (fresh Edge profile, synthetic 1-chapter/3-sentence book): model tier, lexicon entry, and citation/URL rules persisted across reloads. Default-profile audio read `0 of 1 fully cached` under the new speech profile; re-seeding the respelled cache with `speechKey 7d177ad4` read `1 of 1 fully cached`. Playback used the seeded respelled cache and stayed at 6 entries (no new inference). A 512 MB cap reclaimed 7 oldest-first entries and left 2; clear-all left 0; zero console/page errors.
 - Measured on the QA laptop (i5-8265U, 15 W, 4 threads): Kokoro q8 WASM runs at roughly **0.2× real time** (3.7 s of audio in ~19–25 s), and fp32 WASM is not faster. Threading scales only ~1.1×. The UI now labels this state instead of showing an indefinite spinner.
-- `npm run typecheck && npm run lint && npm run test && npm run build` passes (19 files, 127 tests, zero lint warnings).
-- Next: finish Phase 4 — pronunciation lexicon with cache-key versioning, normalization rules, settings sheet, model-tier selector, cache management/caps.
+- `npm run typecheck && npm run lint && npm run test && npm run build` passes (21 files, 146 tests, zero lint warnings).
+- Next: cross-browser QA sweep (Safari/iOS gesture and safe-area behavior, Firefox WASM fallback), GitHub Pages single-thread documentation, and a large-library storage stress pass.
+
 
 ## Phase Tracker
 
@@ -176,7 +180,7 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 | 1. Ingestion + bookshelf | Complete | EPUB + PDF, OPFS/IDB, import UX, palette covers |
 | 2. TTS + playback | Complete | Kokoro worker, OPFS PCM cache, scheduler, player UI |
 | 3. Live Lyrics + voice/speed | Complete | Book Page, WSOLA speed, 3-voice pad, chapter cache rings |
-| 4. Export + settings + polish | In progress | Export studio (MP3/M4B + chpl) done; lexicon, settings, cache caps next |
+| 4. Export + settings + polish | Complete | MP3/M4B + chpl, settings sheet, lexicon/rules, tiers, cache caps |
 
 ## Progress Log
 
@@ -236,6 +240,16 @@ Add one dated entry per milestone. Keep entries short: what changed, what passed
 - Real-browser QA (headed Edge, synthetic 2-chapter/45-sentence book with pre-seeded cache): M4B whole-book → 865,332 B, 77.40 s, `ftyp/mdat/moov`, moov at EOF, `chpl` at 0 s + 68.8 s, decoded 77.42 s; MP3 chapter → 138,932 B, 8.60 s, decoded 8.64 s; pause held, resume completed, cancel removed the partial file; 3 history rows; player-header entry works; no console errors.
 - Verified: 19 test files / 127 tests, typecheck, lint (0 warnings), production build (exporter worker emitted).
 
+### 2026-11-13 — Phase 4 settings, lexicon, and cache management
+- Added `types/speech.ts` (`LexiconEntry`, `NormalizationRules`, `SpeechProfile`, defaults, 8-word phrase limit) and `core/parsing/speech.ts` exports so the parser and the lexicon share one expansion path. `buildSpokenWords()` is now exported and rebuilds word spans/chunks from existing ids.
+- Added `core/tts/respell.ts`: case/punctuation-insensitive matching, longest multi-word match, possessive handling, disabled entries, empty replacement = skip, Roman numerals after chapter-like words, bracketed/author-year citation removal, and URL → "link". Display text, ids, spans, and chunk layout are preserved. 12 tests.
+- Cache correctness: `AudioCacheEntry.speechKey` records an FNV-1a fingerprint of the canonical profile; chapter rings filter by it and a cache hit refreshes it. Speech is applied in the TTS worker before `sentenceCacheKey()`, so stale audio is never reused. Added `cachePolicy.ts` (2 GB default, oldest-first eviction) and `cacheManager.ts` (usage, apply cap, clear all rendered audio); 5 tests.
+- Playback/settings wiring: `PlayerSession` accepts `speech` and `cacheCapBytes`, restarts the timeline when the profile changes, and tracks `loadedTier` so a tier change reloads/disposes the old ONNX session on the next start. `playerStore` syncs settings through a store subscription; exports capture voice, profile, cap, and tier at job start.
+- Added `Switch` and the `SettingsSheet` (Narration / Pronunciation / Storage), mounted in the library shell and player; gear buttons in both headers. Storage shows usage, cap options, and clear-all with confirmation.
+- Real-browser QA (fresh Edge profile, synthetic 1-chapter/3-sentence book): tier/lexicon/rules persisted across reloads; default cache read `0 of 1 fully cached`, seeded `speechKey 7d177ad4` read `1 of 1 fully cached`; playback advanced to 0.5 s from the seeded cache and stayed at 6 entries (no new inference); a 512 MB cap reclaimed 7 oldest-first entries leaving 2; clear-all left 0; no console or page errors.
+- Known limitation: replacements are respellings, not IPA. The bundled `phonemizer` only emits IPA and espeak's `[[...]]` phoneme input is unavailable, so users spell the sound (`Her-my-oh-nee`).
+- Verified: 21 test files / 146 tests, typecheck, lint (0 warnings), production build.
+
 ## Context-Management Protocol
 
 This project is large; protect context deliberately:
@@ -272,8 +286,10 @@ This project is large; protect context deliberately:
 ## Known Risks / Open Questions
 
 - M4B `chpl` chapter compatibility in Apple Books (accepted; can add a QuickTime chapter track later).
-- Full-book PCM cache can reach multiple GB; add a cache cap and clear-after-export option.
+- Rendered PCM can still reach multiple GB before eviction; the default 2 GB soft cap sweeps oldest-first every 8 writes and immediately when lowered. Clearing rendered audio keeps models, books, progress, and exports.
 - WASM-only devices may synthesize slower than real time; measured ~0.2× real time on a 15 W i5 with q8, so buffering can last tens of seconds per sentence. The dock labels this, but the next real lever is WebGPU (real adapter) and/or a faster WASM configuration.
+- Lexicon replacements are respellings, not IPA: `phonemizer` only emits IPA and espeak `[[...]]` input is not exposed, so users must spell the sound (`Her-my-oh-nee`). Revisit if the engine gains phoneme input.
+- A tier change disposes and reloads the ONNX session on the next narration start. The old session stays resident until then; switching back and forth repeatedly can re-download nothing (OPFS cache) but does pay session init each time.
 - Seek, voice change, and pause call `cancelPending()`; the one in-flight inference still finishes and is cached, so a switch can lag by at most one sentence.
 - Blended voices are phonemized in the primary voice's language; the style rows mix timbre and prosody but not phoneme inventories. Mixing en-US and en-GB voices therefore uses the primary accent's phonemes.
 - Speed changes restart the current sentence only when audio is already scheduled; if synthesis is still running, the request resolves at the new rate and no inference is wasted.
