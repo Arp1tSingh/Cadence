@@ -172,7 +172,7 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 - Measured on the QA laptop (i5-8265U, 15 W, 4 threads): Kokoro q8 WASM runs at roughly **0.2× real time** (3.7 s of audio in ~19–25 s), and fp32 WASM is not faster. Threading scales only ~1.1×. The UI now labels this state instead of showing an indefinite spinner.
 - `npm run typecheck && npm run lint && npm run test && npm run build` passes (21 files, 146 tests, zero lint warnings).
 - **Vercel-ready, not yet deployed.** `vercel.json` pins `npm ci` / `npm run build` / `dist` and sends COOP/COEP + CORP on every route, so Vercel builds are cross-origin isolated and ONNX Runtime Web can use multiple WASM threads. Hashed assets are cached immutably; ORT WASM, PDF.js assets, and voices are cached for seven days. No environment variables or server functions are needed. Verified with a root-base production build and a preview server carrying the same headers: `crossOriginIsolated: true` and zero console errors.
-- **GitHub Pages retired.** The Pages workflow was removed, the site was disabled through the API, and the repository homepage was cleared. Pages could not set COOP/COEP, so it ran with a single WASM thread; the app was fully functional there, but every feature except threaded inference is also available on Vercel with better performance. The Pages URL is expected to return 404 now.
+- **GitHub Pages retired.** The Pages workflow was removed, the site was disabled through the API, the `github-pages` environment was deleted, and the repository homepage was cleared. Pages could not set COOP/COEP, so it ran with a single WASM thread; the app was fully functional there, but every feature except threaded inference is also available on Vercel with better performance. The Pages URL now returns 404.
 - Next: connect the repository to Vercel (import at `vercel.com/new` or run `npx vercel --prod`), then verify the deployed URL and set it as the repository homepage. After that: cross-browser QA sweep (Safari/iOS gesture and safe-area behavior, Firefox WASM fallback), and a large-library storage stress pass.
 
 
@@ -268,7 +268,7 @@ Add one dated entry per milestone. Keep entries short: what changed, what passed
 - Replaced the Pages deployment workflow with CI-only `.github/workflows/ci.yml` (lint, test, build) so pushes and PRs still get verified without publishing anywhere.
 - Removed Pages-specific docs and base comments; README now documents Vercel setup and `VITE_BASE` for subpath hosts. `VITE_BASE` support remains available.
 - Disabled the GitHub Pages site via the API and cleared the repository homepage; confirmed the app has no feature-level dependency on cross-origin isolation (only the ORT WASM thread count).
-- Verified: root-base production build, preview headers (`crossOriginIsolated: true`), typecheck, lint (0 warnings), and the full test suite.
+- Verified: root-base production build, preview headers (`crossOriginIsolated: true`), typecheck, lint (0 warnings), and the full test suite. Pushed `ca3e838`; CI run 43433272364 passed, and the retired Pages URL returns 404.
 
 ## Context-Management Protocol
 
