@@ -116,13 +116,28 @@ export type AudioCacheEntry = {
 export type ExportJobRecord = {
   id: string;
   bookId: string;
+  bookTitle: string;
   format: 'mp3' | 'm4b';
+  scope: 'book' | 'chapter';
+  chapterIndex?: number;
+  chapterTitle?: string;
   status: 'queued' | 'running' | 'paused' | 'done' | 'error';
+  /** 0..1 across the sentences selected for this job. */
   progress: number;
-  chapterIndex: number;
+  totalSentences: number;
+  completedSentences: number;
+  durationSeconds: number;
+  /** Final file size in bytes; zero until the job finishes. */
+  size: number;
+  /** File name inside OPFS `/exports`. */
+  fileName: string;
+  /** User-facing download name, e.g. `Pride and Prejudice.m4b`. */
+  suggestedName: string;
+  voiceKey: string;
+  title: string;
+  error?: string;
   createdAt: number;
   updatedAt: number;
-  error?: string;
 };
 
 export type SettingRecord<T = unknown> = {

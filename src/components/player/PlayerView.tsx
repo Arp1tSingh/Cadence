@@ -1,8 +1,9 @@
-import { AlignCenter, BookOpenText, ChevronLeft, ListMusic, Mic2, Play } from 'lucide-react';
+import { AlignCenter, BookOpenText, ChevronLeft, Download, ListMusic, Mic2, Play } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BookDocument } from '@/types/domain';
 import { usePlayerFrame, usePlayerStore } from '@/store/playerStore';
 import { useSettingsStore } from '@/store/settingsStore';
+import { useExportStore } from '@/store/exportStore';
 import { MeshBackdrop } from './MeshBackdrop';
 import { LyricsStage } from './LyricsStage';
 import { BookPage } from './BookPage';
@@ -12,6 +13,7 @@ import { VoiceSheet } from './VoiceSheet';
 import { SpeedSheet } from './SpeedSheet';
 import { ModelSetup } from './ModelSetup';
 import { PlayerError } from './PlayerError';
+import { ExportStudio } from '@/components/modals/ExportStudio';
 import { IconButton } from '@/components/ui/IconButton';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
@@ -32,6 +34,7 @@ export function PlayerView({ book }: PlayerViewProps) {
   const seekToSentence = usePlayerStore((state) => state.seekToSentence);
   const lyricsMode = useSettingsStore((state) => state.lyricsMode);
   const setLyricsMode = useSettingsStore((state) => state.setLyricsMode);
+  const openExport = useExportStore((state) => state.openStudio);
 
   const [chaptersOpen, setChaptersOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
@@ -162,6 +165,13 @@ export function PlayerView({ book }: PlayerViewProps) {
               <Mic2 size={17} />
             </IconButton>
             <IconButton
+              label="Export audiobook"
+              onClick={() => void openExport(book)}
+              variant="ghost"
+            >
+              <Download size={17} />
+            </IconButton>
+            <IconButton
               label="Open chapters"
               onClick={() => setChaptersOpen(true)}
               variant="ghost"
@@ -253,6 +263,8 @@ export function PlayerView({ book }: PlayerViewProps) {
           onClose={close}
         />
       ) : null}
+
+      <ExportStudio />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { expose } from 'comlink';
 import * as Comlink from 'comlink';
 import type {
+  CachedSentenceInfo,
   ModelInfo,
   ModelLoadProgress,
   ModelLoadRequest,
@@ -14,58 +15,117 @@ import { sentenceCacheKey } from '@/core/tts/cacheKey';
 import { readSentenceCache, writeSentenceCache } from '@/core/tts/audioCache';
 import { ensureModel, synthesizeSentence } from '@/core/tts/engine';
 
-type Job = {
+type Priority = 'foreground' | 'prefetch';
+
+type JobBase = {
   request: SynthesisRequest;
   key: string;
   voiceKey: string;
-  priority: 'foreground' | 'prefetch';
+  priority: Priority;
   cancelled: boolean;
+};
+
+type AudioJob = JobBase & {
+  mode: 'audio';
   resolve: (value: SynthesizedSentence) => void;
   reject: (reason: unknown) => void;
 };
+
+type CacheJob = JobBase & {
+  mode: 'cache';
+  resolve: (value: CachedSentenceInfo) => void;
+  reject: (reason: unknown) => void;
+};
+
+type Job = AudioJob | CacheJob;
 
 const queue: Job[] = [];
 let running = false;
 /** The job currently awaiting inference, if any. */
 let current: Job | null = null;
 
-function runJob(job: Job): Promise<SynthesizedSentence> {
-  return (async () => {
-    const { bookId, sentence } = job.request;
+async function runAudioJob(job: AudioJob): Promise<SynthesizedSentence> {
+  const { bookId, sentence } = job.request;
 
-    const cached = await readSentenceCache(bookId, job.voiceKey, job.key);
-    if (cached) {
-      return {
-        sentenceId: sentence.id,
-        sampleRate: SAMPLE_RATE,
-        duration: cached.duration,
-        audio: cached.audio,
-        timings: cached.timings,
-        fromCache: true,
-      };
-    }
-
-    if (job.cancelled) throw createJobCancelledError();
-
-    const synthesized = await synthesizeSentence({
-      sentence,
-      voice: job.request.voice,
-    });
-
-    // Persist before returning: Comlink transfers the Float32Array buffer to
-    // the main thread, detaching it here.
-    await writeSentenceCache({
-      bookId,
-      voiceKey: job.voiceKey,
-      cacheKey: job.key,
+  const cached = await readSentenceCache(bookId, job.voiceKey, job.key);
+  if (cached) {
+    return {
       sentenceId: sentence.id,
-      chapterIndex: sentence.chapterIndex,
-      audio: synthesized.audio,
-      timings: synthesized.timings,
-    });
+      sampleRate: SAMPLE_RATE,
+      duration: cached.duration,
+      audio: cached.audio,
+      timings: cached.timings,
+      fromCache: true,
+    };
+  }
 
-    return synthesized;
-  })();
+  if (job.cancelled) throw createJobCancelledError();
+
+  const synthesized = await synthesizeSentence({
+    sentence,
+    voice: job.request.voice,
+  });
+
+  // Persist before returning: Comlink transfers the Float32Array buffer to
+  // the main thread, detaching it here.
+  await writeSentenceCache({
+    bookId,
+    voiceKey: job.voiceKey,
+    cacheKey: job.key,
+    sentenceId: sentence.id,
+    chapterIndex: sentence.chapterIndex,
+    audio: synthesized.audio,
+    timings: synthesized.timings,
+  });
+
+  return synthesized;
+}
+
+/**
+ * Cache-only variant for export. The synthesized Float32 PCM stays in the
+ * worker and is dropped after it is written as Int16, so exporting a book does
+ * not stream gigabytes through the main thread.
+ */
+async function runCacheJob(job: CacheJob): Promise<CachedSentenceInfo> {
+  const { bookId, sentence } = job.request;
+
+  const cached = await readSentenceCache(bookId, job.voiceKey, job.key);
+  if (cached) {
+    return {
+      cacheKey: job.key,
+      voiceKey: job.voiceKey,
+      duration: cached.duration,
+      fromCache: true,
+    };
+  }
+
+  if (job.cancelled) throw createJobCancelledError();
+
+  // Exports can start before any playback, so load the model lazily on the
+  // first cache miss. An all-cached export never touches the model at all.
+  if (job.request.tier) await ensureModel(job.request.tier);
+
+  const synthesized = await synthesizeSentence({
+    sentence,
+    voice: job.request.voice,
+  });
+
+  await writeSentenceCache({
+    bookId,
+    voiceKey: job.voiceKey,
+    cacheKey: job.key,
+    sentenceId: sentence.id,
+    chapterIndex: sentence.chapterIndex,
+    audio: synthesized.audio,
+    timings: synthesized.timings,
+  });
+
+  return {
+    cacheKey: job.key,
+    voiceKey: job.voiceKey,
+    duration: synthesized.duration,
+    fromCache: false,
+  };
 }
 
 async function pump(): Promise<void> {
@@ -85,7 +145,8 @@ async function pump(): Promise<void> {
       // request. Let `cancelPending` know it is the only work in flight.
       current = job;
       try {
-        job.resolve(await runJob(job));
+        if (job.mode === 'audio') job.resolve(await runAudioJob(job));
+        else job.resolve(await runCacheJob(job));
       } catch (error) {
         job.reject(error);
       } finally {
@@ -110,6 +171,10 @@ function enqueue(job: Job): void {
   void pump();
 }
 
+function priorityOf(request: SynthesisRequest): Priority {
+  return request.priority === 'prefetch' ? 'prefetch' : 'foreground';
+}
+
 const workerApi: TtsWorkerApi = {
   async ensureModel(
     request: ModelLoadRequest,
@@ -123,10 +188,11 @@ const workerApi: TtsWorkerApi = {
 
     const result = await new Promise<SynthesizedSentence>((resolve, reject) => {
       enqueue({
+        mode: 'audio',
         request,
         key,
         voiceKey,
-        priority: request.priority === 'prefetch' ? 'prefetch' : 'foreground',
+        priority: priorityOf(request),
         cancelled: false,
         resolve,
         reject,
@@ -134,6 +200,24 @@ const workerApi: TtsWorkerApi = {
     });
 
     return Comlink.transfer(result, [result.audio.buffer]);
+  },
+
+  async ensureCached(request: SynthesisRequest): Promise<CachedSentenceInfo> {
+    const { key, voiceKey } = await sentenceCacheKey(request.sentence, request.voice);
+
+    return new Promise<CachedSentenceInfo>((resolve, reject) => {
+      enqueue({
+        mode: 'cache',
+        request,
+        key,
+        voiceKey,
+        // Export work never jumps ahead of playback.
+        priority: 'prefetch',
+        cancelled: false,
+        resolve,
+        reject,
+      });
+    });
   },
 
   /**

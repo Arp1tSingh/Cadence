@@ -1,9 +1,10 @@
-import { Play, Plus } from 'lucide-react';
+import { Download, Play, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Sheet } from '@/components/ui/Sheet';
 import { formatDuration } from '@/core/parsing/text';
 import { formatBytes } from '@/hooks/useStorageEstimate';
+import { useExportStore } from '@/store/exportStore';
 import { useLibraryStore } from '@/store/libraryStore';
 import type { BookDocument } from '@/types/domain';
 import { BookCard } from './BookCard';
@@ -146,6 +147,7 @@ type BookDetailSheetProps = {
 };
 
 function BookDetailSheet({ book, open, onClose, onListen, onRemove }: BookDetailSheetProps) {
+  const openStudio = useExportStore((state) => state.openStudio);
   if (!book) return null;
 
   const facts = [
@@ -179,6 +181,10 @@ function BookDetailSheet({ book, open, onClose, onListen, onRemove }: BookDetail
             onClick={() => onRemove(book)}
           >
             Remove
+          </Button>
+          <Button variant="secondary" onClick={() => void openStudio(book)}>
+            <Download size={15} aria-hidden="true" />
+            Export
           </Button>
           <Button onClick={() => onListen(book)}>
             <Play size={15} fill="currentColor" aria-hidden="true" />

@@ -4,6 +4,7 @@ import { DropOverlay } from '@/components/bookshelf/WindowDropzone';
 import { EmptyLibrary } from '@/components/bookshelf/EmptyLibrary';
 import { ImportSheet } from '@/components/bookshelf/ImportSheet';
 import { LibraryView } from '@/components/bookshelf/LibraryView';
+import { ExportStudio } from '@/components/modals/ExportStudio';
 import { MeshBackdrop } from '@/components/player/MeshBackdrop';
 import { PlayerView } from '@/components/player/PlayerView';
 import { Button } from '@/components/ui/Button';
@@ -183,6 +184,7 @@ export function AppShell() {
       />
 
       <ImportSheet open={importOpen} onClose={() => setImportOpen(false)} />
+      <ExportStudio />
       <DropOverlay active={dragging} />
     </div>
   );

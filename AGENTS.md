@@ -120,7 +120,7 @@ OPFS
   /books/<bookId>.<epub|pdf>         # original import
   /covers/<bookId>.<ext>             # cover image
   /cache/<bookId>/<voiceKey>/<hash>.i16
-  /exports/<jobId>.tmp
+  /exports/<jobId>.<mp3|m4b>      # finalized export (moov last, chpl patched in place)
 
 IndexedDB (via idb)
   books        # BookDocument without runtime audio fields
@@ -161,10 +161,12 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 - **Phase 1 — complete.** Domain schema, IndexedDB/OPFS storage, text normalization and speech expansion, sentence/word/chunk builder, EPUB parser (nav + NCX + heading-level splitting), PDF layout engine, palette extraction, parser worker/client, bookshelf, import sheet, window dropzones, and progress UI.
 - **Phase 2 — complete.** Kokoro TTS worker with a foreground/prefetch queue, OPFS Int16 audio cache keyed by engine version + voice + text hash, Web Audio scheduler, player session (lookahead, buffering, seek, chapter/voice restart), MediaSession and Wake Lock, settings/player stores, and the player UI (lyrics stage, glass dock, chapter drawer, voice sheet, model setup, error overlay).
 - **Phase 3 — complete.** Offline WSOLA time-stretching in `stretch.worker.ts` with a rate-aware session timeline and speed sheet; Book Page reader with memoized chapter paragraphs, imperative sentence/word sweep, auto-scroll plus resume pill, and tap-to-seek; per-chapter synthesis rings in the drawer; and a barycentric 3-voice style pad that blends two or three 256-float voice rows.
+- **Phase 4 — in progress (export done).** Export studio with streaming MP3 (LAME WASM) and M4B (AAC at 48 kHz via `AudioSampleSource` resampling) encodes; the exporter worker reads Int16 PCM straight from OPFS, writes through `StreamTarget` into an OPFS file, and patches Nero `chpl` into `moov/udta` after the moov lands at EOF. Cache-only `ensureCached()` synthesizes only on misses and loads the model lazily, so exporting already-listened audio never touches inference. Pause/resume/cancel, persisted job history, and streamed downloads are wired.
 - Real-browser QA (Edge, `playwright-core`): q8 WASM download (88 MB), model init, word-level playback, prefetch cache growth, pause/resume, next sentence, chapter jump, per-voice caching (`af_heart` + `bf_emma`), 1.5× WSOLA duration (52,082 s → 34,721 s), Book Page word sweep and tap seek, 76 chapter rows with cache rings, and a 3-voice blend cached under `af_heart+bf_emma-48+am_michael-47` with all three shares in the dock.
+- Export QA uses a synthetic two-chapter book with pre-seeded Int16 cache (45 tones): M4B whole-book → 865,332 B, 77.40 s, boxes `ftyp/mdat/moov`, moov at EOF, `chpl` marks at 0 s and 68.8 s, decodes to 77.42 s; MP3 chapter → 138,932 B, 8.60 s, decodes to 8.64 s; pause held the encoder, resume finished, cancel deleted the partial file, and three history rows persisted. Headless Edge has no AAC encoder; headed Edge encodes AAC at 44.1/48 kHz, not 24 kHz — hence the resample.
 - Measured on the QA laptop (i5-8265U, 15 W, 4 threads): Kokoro q8 WASM runs at roughly **0.2× real time** (3.7 s of audio in ~19–25 s), and fp32 WASM is not faster. Threading scales only ~1.1×. The UI now labels this state instead of showing an indefinite spinner.
-- `npm run typecheck && npm run lint && npm run test && npm run build` passes (17 files, 105 tests, zero lint warnings).
-- Next: Phase 4 — export studio (MP3/M4B + `chpl`), lexicon/normalization rules/settings, model-tier selector, cache management/caps.
+- `npm run typecheck && npm run lint && npm run test && npm run build` passes (19 files, 127 tests, zero lint warnings).
+- Next: finish Phase 4 — pronunciation lexicon with cache-key versioning, normalization rules, settings sheet, model-tier selector, cache management/caps.
 
 ## Phase Tracker
 
@@ -174,7 +176,7 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 | 1. Ingestion + bookshelf | Complete | EPUB + PDF, OPFS/IDB, import UX, palette covers |
 | 2. TTS + playback | Complete | Kokoro worker, OPFS PCM cache, scheduler, player UI |
 | 3. Live Lyrics + voice/speed | Complete | Book Page, WSOLA speed, 3-voice pad, chapter cache rings |
-| 4. Export + settings + polish | Not started | |
+| 4. Export + settings + polish | In progress | Export studio (MP3/M4B + chpl) done; lexicon, settings, cache caps next |
 
 ## Progress Log
 
@@ -224,6 +226,15 @@ Add one dated entry per milestone. Keep entries short: what changed, what passed
 - Added a 3-voice barycentric mixer (`VoiceBlendPad`), `tertiary`/`tertiaryWeight` in `VoiceSelection`, normalized `voiceWeightsFor()` blending, three-voice cache keys and labels, and auto-scroll to the pad when enabled. The engine sums N style rows.
 - Real-browser QA: 1.5× duration exactly `52082.03 / 1.5 = 34721.35`, playback resumed, Book Page 24 sentences with word sweep and tap seek, auto-scroll pill, 76 chapter rows (75 rings + 1 spinner), and a 3-voice mix synthesized under `af_heart+bf_emma-48+am_michael-47` with `Narrated by Heart 28% · Emma 25% · Michael 47%`.
 - Verified: 17 test files / 105 tests, typecheck, lint (0 warnings), production build (stretch worker emitted).
+
+### 2026-11-13 — Phase 4 export studio (MP3 + M4B)
+- Added `core/export/chpl.ts`: 32/64-bit box parsing, `chpl` insert/replace, title trimming, and moov growth in place; 15 tests.
+- Added `core/export/plan.ts`: ordered chapter/sentence plans, portable file stems, suggested names, cover MIME detection; 7 tests.
+- `exporter.worker.ts` streams Int16 PCM from OPFS into Mediabunny, through `StreamTarget` into an `exports/<jobId>.<format>` writable, then patches `moov/udta/chpl` at EOF so no media offset moves. MP3 uses LAME via `@mediabunny/mp3-encoder` at 128 kbps; M4B uses WebCodecs AAC at 96 kbps, resampled to 48 kHz (44.1 kHz fallback) because platform AAC encoders reject 24 kHz.
+- `ensureCached()` in `tts.worker.ts` caches without transferring PCM, uses prefetch priority, retries after playback `cancelPending()`, and loads the model lazily only on a cache miss. Export never crosses the main thread with book-scale audio.
+- Added the export store (start/pause/resume/cancel, 1.5 s persistence throttle, interrupted-job recovery, streamed `showSaveFilePicker` download with blob fallback) and the Export Studio sheet (format + scope + chapter picker, progress, history with download/delete), reachable from the library detail sheet and the player header.
+- Real-browser QA (headed Edge, synthetic 2-chapter/45-sentence book with pre-seeded cache): M4B whole-book → 865,332 B, 77.40 s, `ftyp/mdat/moov`, moov at EOF, `chpl` at 0 s + 68.8 s, decoded 77.42 s; MP3 chapter → 138,932 B, 8.60 s, decoded 8.64 s; pause held, resume completed, cancel removed the partial file; 3 history rows; player-header entry works; no console errors.
+- Verified: 19 test files / 127 tests, typecheck, lint (0 warnings), production build (exporter worker emitted).
 
 ## Context-Management Protocol
 

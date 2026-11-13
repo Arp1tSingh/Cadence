@@ -92,6 +92,33 @@ export class OpfsStore {
     }
   }
 
+  /** Returns a file handle, optionally creating the file. */
+  async fileHandle(segments: string[], create = false): Promise<FileSystemFileHandle> {
+    const fileName = segments[segments.length - 1];
+    const dir = await this.ensureDir(...segments.slice(0, -1));
+    return dir.getFileHandle(fileName, { create });
+  }
+
+  async file(segments: string[]): Promise<File | null> {
+    try {
+      return await (await this.fileHandle(segments)).getFile();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'NotFoundError') return null;
+      throw error;
+    }
+  }
+
+  /**
+   * Opens a writable stream for streaming export encoders. Pass
+   * `keepExistingData: true` to patch an already finalized file in place.
+   */
+  async createWritable(
+    segments: string[],
+    options?: FileSystemCreateWritableOptions,
+  ): Promise<FileSystemWritableFileStream> {
+    return (await this.fileHandle(segments, true)).createWritable(options);
+  }
+
   async remove(segments: string[]): Promise<void> {
     const fileName = segments[segments.length - 1];
     const dir = await this.ensureDir(...segments.slice(0, -1));

@@ -50,6 +50,11 @@ export type SynthesisRequest = {
   sentence: SentenceNode;
   /** Foreground requests run before prefetch requests. */
   priority?: 'foreground' | 'prefetch';
+  /**
+   * Model tier to load if the sentence is not cached. Only the cache-only
+   * export path needs this; playback loads the model before requesting audio.
+   */
+  tier?: ModelTier;
 };
 
 export type SynthesizedSentence = {
@@ -61,12 +66,26 @@ export type SynthesizedSentence = {
   fromCache: boolean;
 };
 
+/** Metadata returned by the cache-only path used by the exporter. */
+export type CachedSentenceInfo = {
+  cacheKey: string;
+  voiceKey: string;
+  duration: number;
+  fromCache: boolean;
+};
+
 export type TtsWorkerApi = {
   ensureModel(
     request: ModelLoadRequest,
     onProgress?: (progress: ModelLoadProgress) => void,
   ): Promise<ModelInfo>;
   synthesize(request: SynthesisRequest): Promise<SynthesizedSentence>;
+  /**
+   * Ensures a sentence is in the OPFS cache and returns its key and duration
+   * without transferring the PCM to the main thread. Used by book export so a
+   * whole book never crosses the thread boundary as audio.
+   */
+  ensureCached(request: SynthesisRequest): Promise<CachedSentenceInfo>;
   /**
    * Drops every queued job. In-flight inference finishes so its audio is still
    * cached, but callers ignore the result once the timeline generation moves on.

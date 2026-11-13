@@ -1,5 +1,6 @@
 import * as Comlink from 'comlink';
 import type {
+  CachedSentenceInfo,
   ModelInfo,
   ModelLoadProgress,
   ModelTier,
@@ -38,6 +39,13 @@ export async function synthesizeSentence(
   return getApi().synthesize(request);
 }
 
+/** Caches a sentence for export without transferring its PCM. */
+export async function ensureSentenceCached(
+  request: SynthesisRequest,
+): Promise<CachedSentenceInfo> {
+  return getApi().ensureCached(request);
+}
+
 /** Drops queued jobs so a seek or voice change is not starved by stale work. */
 export async function cancelPending(): Promise<void> {
   if (!api) return;
@@ -55,6 +63,7 @@ export function disposeTtsWorker(): void {
 }
 
 export type {
+  CachedSentenceInfo,
   ModelInfo,
   ModelLoadProgress,
   ModelTier,
