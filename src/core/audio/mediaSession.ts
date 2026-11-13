@@ -67,7 +67,7 @@ export function updateMediaMetadata(input: MediaMetadataInput): void {
   });
 }
 
-export function updatePositionState(duration: number, position: number): void {
+export function updatePositionState(duration: number, position: number, rate = 1): void {
   const session = mediaSession();
   if (!session || !Number.isFinite(duration) || duration <= 0) return;
 
@@ -75,7 +75,7 @@ export function updatePositionState(duration: number, position: number): void {
   try {
     session.setPositionState({
       duration,
-      playbackRate: 1,
+      playbackRate: Number.isFinite(rate) && rate > 0 ? rate : 1,
       position: safePosition,
     });
   } catch {

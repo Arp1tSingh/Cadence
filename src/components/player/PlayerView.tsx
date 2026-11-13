@@ -1,16 +1,20 @@
-import { ChevronLeft, ListMusic, Mic2, Play } from 'lucide-react';
+import { AlignCenter, BookOpenText, ChevronLeft, ListMusic, Mic2, Play } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BookDocument } from '@/types/domain';
 import { usePlayerFrame, usePlayerStore } from '@/store/playerStore';
+import { useSettingsStore } from '@/store/settingsStore';
 import { MeshBackdrop } from './MeshBackdrop';
 import { LyricsStage } from './LyricsStage';
+import { BookPage } from './BookPage';
 import { PlayerDock } from './PlayerDock';
 import { ChapterDrawer } from './ChapterDrawer';
 import { VoiceSheet } from './VoiceSheet';
+import { SpeedSheet } from './SpeedSheet';
 import { ModelSetup } from './ModelSetup';
 import { PlayerError } from './PlayerError';
 import { IconButton } from '@/components/ui/IconButton';
 import { Button } from '@/components/ui/Button';
+import { cn } from '@/lib/cn';
 
 type PlayerViewProps = {
   book: BookDocument;
@@ -25,9 +29,13 @@ export function PlayerView({ book }: PlayerViewProps) {
   const seekToSeconds = usePlayerStore((state) => state.seekToSeconds);
   const seekBy = usePlayerStore((state) => state.seekBy);
   const seekToChapter = usePlayerStore((state) => state.seekToChapter);
+  const seekToSentence = usePlayerStore((state) => state.seekToSentence);
+  const lyricsMode = useSettingsStore((state) => state.lyricsMode);
+  const setLyricsMode = useSettingsStore((state) => state.setLyricsMode);
 
   const [chaptersOpen, setChaptersOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
+  const [speedOpen, setSpeedOpen] = useState(false);
 
   const progressRef = useRef<HTMLDivElement>(null);
   const lastProgressRef = useRef(0);
@@ -44,6 +52,20 @@ export function PlayerView({ book }: PlayerViewProps) {
   const previousText = flat[currentIndex - 1]?.displayText;
   const nextText = flat[currentIndex + 1]?.displayText;
   const duration = snapshot.durationSeconds;
+
+  const sentenceIndexById = useMemo(() => {
+    const map = new Map<string, number>();
+    flat.forEach((sentence, index) => map.set(sentence.id, index));
+    return map;
+  }, [flat]);
+
+  const seekToSentenceById = useCallback(
+    (sentenceId: string) => {
+      const index = sentenceIndexById.get(sentenceId);
+      if (index !== undefined) seekToSentence(index);
+    },
+    [seekToSentence, sentenceIndexById],
+  );
 
   usePlayerFrame(
     useCallback(
@@ -76,7 +98,7 @@ export function PlayerView({ book }: PlayerViewProps) {
       } else if (event.key === 'ArrowLeft') {
         event.preventDefault();
         seekBy(-15);
-      } else if (event.key === 'Escape' && !chaptersOpen && !voiceOpen) {
+      } else if (event.key === 'Escape' && !chaptersOpen && !voiceOpen && !speedOpen) {
         event.preventDefault();
         void closePlayer();
       }
@@ -84,14 +106,14 @@ export function PlayerView({ book }: PlayerViewProps) {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [chaptersOpen, closePlayer, seekBy, toggle, voiceOpen]);
+  }, [chaptersOpen, closePlayer, seekBy, speedOpen, toggle, voiceOpen]);
 
   const close = useCallback(() => {
     void closePlayer();
   }, [closePlayer]);
 
   return (
-    <div className="relative flex min-h-dvh flex-col overflow-hidden">
+    <div className="relative flex h-dvh flex-col overflow-hidden">
       <MeshBackdrop colors={book.palette.colors} />
 
       <div className="fixed inset-x-0 top-0 z-40 h-[3px] bg-hairline/60">
@@ -120,6 +142,19 @@ export function PlayerView({ book }: PlayerViewProps) {
 
           <div className="flex items-center gap-0.5">
             <IconButton
+              label={lyricsMode === 'focus' ? 'Switch to Book Page' : 'Switch to focus lyrics'}
+              onClick={() =>
+                setLyricsMode(lyricsMode === 'focus' ? 'book' : 'focus')
+              }
+              variant="ghost"
+            >
+              {lyricsMode === 'focus' ? (
+                <BookOpenText size={17} />
+              ) : (
+                <AlignCenter size={17} />
+              )}
+            </IconButton>
+            <IconButton
               label="Choose narrator"
               onClick={() => setVoiceOpen(true)}
               variant="ghost"
@@ -137,13 +172,29 @@ export function PlayerView({ book }: PlayerViewProps) {
         </div>
       </header>
 
-      <main className="relative z-10 mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 pb-44 pt-2 sm:px-8 sm:pb-48">
-        <LyricsStage
-          sentence={snapshot.sentence}
-          previousText={previousText}
-          nextText={nextText}
-          active={snapshot.status === 'playing'}
-        />
+      <main
+        className={cn(
+          'relative z-10 mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col',
+          lyricsMode === 'focus'
+            ? 'px-4 pb-44 pt-2 sm:px-8 sm:pb-48'
+            : 'px-2 pb-40 pt-0 sm:px-4 sm:pb-44',
+        )}
+      >
+        {lyricsMode === 'focus' ? (
+          <LyricsStage
+            sentence={snapshot.sentence}
+            previousText={previousText}
+            nextText={nextText}
+            active={snapshot.status === 'playing'}
+          />
+        ) : (
+          <BookPage
+            key={book.chapters[snapshot.chapterIndex]?.id ?? snapshot.chapterIndex}
+            book={book}
+            chapterIndex={snapshot.chapterIndex}
+            onSeekSentence={seekToSentenceById}
+          />
+        )}
       </main>
 
       <PlayerDock
@@ -156,6 +207,7 @@ export function PlayerView({ book }: PlayerViewProps) {
         onSeekTo={seekToSeconds}
         onOpenChapters={() => setChaptersOpen(true)}
         onOpenVoice={() => setVoiceOpen(true)}
+        onOpenSpeed={() => setSpeedOpen(true)}
       />
 
       {snapshot.status === 'idle' && snapshot.sentence ? (
@@ -180,6 +232,12 @@ export function PlayerView({ book }: PlayerViewProps) {
       />
 
       <VoiceSheet open={voiceOpen} onClose={() => setVoiceOpen(false)} />
+
+      <SpeedSheet
+        open={speedOpen}
+        onClose={() => setSpeedOpen(false)}
+        durationSeconds={book.estimatedDuration}
+      />
 
       {snapshot.status === 'preparing' ? (
         <ModelSetup

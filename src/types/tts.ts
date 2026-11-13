@@ -14,6 +14,13 @@ export type VoiceSelection = {
   secondary?: string;
   /** 0 = all primary, 1 = all secondary. Ignored without a secondary voice. */
   blend?: number;
+  /** Optional third voice for the 2D style pad. */
+  tertiary?: string;
+  /**
+   * Share of the final mix given to the tertiary voice (0–0.95). The remaining
+   * `1 - tertiaryWeight` is split between primary and secondary by `blend`.
+   */
+  tertiaryWeight?: number;
 };
 
 export type ModelLoadRequest = {

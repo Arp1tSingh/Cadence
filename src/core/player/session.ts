@@ -16,6 +16,9 @@ import {
   synthesizeSentence,
 } from '@/core/workers/ttsClient';
 import { AudioScheduler } from '@/core/audio/audioScheduler';
+import { clampPlaybackRate } from '@/core/audio/rate';
+import { scaleTimings } from '@/core/audio/wsola';
+import { stretchAudio } from '@/core/workers/stretchClient';
 import {
   clearMediaSession,
   configureMediaSession,
@@ -71,6 +74,8 @@ type OpenOptions = {
   voice: VoiceSelection;
   tier: ModelTier;
   volume?: number;
+  /** Playback speed; audio is time-stretched without re-synthesis. */
+  rate?: number;
 };
 
 const EMPTY_SNAPSHOT: PlayerSnapshot = {
@@ -98,6 +103,7 @@ export class PlayerSession {
   private voice: VoiceSelection = { primary: 'af_heart' };
   private tier: ModelTier = 'auto';
   private playIntent = false;
+  private rate = 1;
 
   private currentIndex = 0;
   private nextScheduleIndex = 0;
@@ -119,7 +125,8 @@ export class PlayerSession {
   private snapshot: PlayerSnapshot = EMPTY_SNAPSHOT;
   private listeners = new Set<() => void>();
   private frameListeners = new Set<(frame: PlayerFrame) => void>();
-  private durationSeconds = 0;
+  /** Narration length at 1×; playback duration is this divided by `rate`. */
+  private contentDuration = 0;
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -154,6 +161,7 @@ export class PlayerSession {
     this.book = book;
     this.voice = normalizeVoiceSelection(options.voice);
     this.tier = options.tier;
+    this.rate = clampPlaybackRate(options.rate ?? 1);
     this.playIntent = false;
     this.error = null;
     this.modelProgress = null;
@@ -175,7 +183,7 @@ export class PlayerSession {
       }
     }
     this.total = this.flat.length;
-    this.durationSeconds = Math.max(book.estimatedDuration, elapsed);
+    this.contentDuration = Math.max(book.estimatedDuration, elapsed);
     this.scheduler.setVolume(options.volume ?? 1);
 
     let saved: ReadingProgress | undefined;
@@ -297,9 +305,12 @@ export class PlayerSession {
 
   seekToSeconds(seconds: number): void {
     if (this.total === 0) return;
-    const clamped = Math.min(this.durationSeconds, Math.max(0, seconds));
+    const duration = this.playbackDuration();
+    const playback = Math.min(duration, Math.max(0, seconds));
+    // Scrubber time is playback time; the sentence table is stored at 1×.
+    const content = playback * this.rate;
     let index = 0;
-    while (index + 1 < this.total && this.prefixDurations[index + 1] <= clamped) index += 1;
+    while (index + 1 < this.total && this.prefixDurations[index + 1] <= content) index += 1;
     this.seek(index);
   }
 
@@ -321,6 +332,34 @@ export class PlayerSession {
 
   setVolume(volume: number): void {
     this.scheduler.setVolume(volume);
+  }
+
+  setRate(rate: number): void {
+    const next = clampPlaybackRate(rate);
+    if (Math.abs(next - this.rate) < 1e-3) return;
+    this.rate = next;
+    if (!this.book || this.total === 0) {
+      this.emit();
+      return;
+    }
+    if (this.status === 'preparing') {
+      this.emit();
+      return;
+    }
+
+    // If nothing is queued yet, pending synthesis can safely finish: requests
+    // stretch at whatever `this.rate` is when their audio resolves. Restarting
+    // here would throw away minutes of inference on a slow device.
+    if (this.scheduler.queuedCount === 0 && this.ready.size === 0) {
+      this.emit();
+      return;
+    }
+
+    this.restartTimeline();
+  }
+
+  getRate(): number {
+    return this.rate;
   }
 
   async close(): Promise<void> {
@@ -345,7 +384,8 @@ export class PlayerSession {
     this.currentIndex = 0;
     this.nextScheduleIndex = 0;
     this.requestCursor = 0;
-    this.durationSeconds = 0;
+    this.contentDuration = 0;
+    this.rate = 1;
     this.status = 'idle';
     this.modelProgress = null;
     this.error = null;
@@ -435,15 +475,41 @@ export class PlayerSession {
       sentence: entry.sentence,
       priority,
     })
-      .then((result) => {
+      .then(async (result) => {
+        if (generation !== this.generation) return;
+
+        // Read the rate after synthesis resolves: the listener may have changed
+        // speed while inference was running, and stretching is the cheap part.
+        const rate = this.rate;
+        let prepared = result;
+        if (Math.abs(rate - 1) >= 0.001 && result.audio.length > 0) {
+          const audio = await stretchAudio(result.audio, rate);
+          // A seek, voice change, or another rate change may have landed while
+          // the worker was stretching; drop the stale buffer.
+          if (generation !== this.generation) return;
+          if (Math.abs(this.rate - rate) >= 0.001) {
+            // The original audio is already cached, so re-requesting is a fast
+            // OPFS read followed by a stretch at the new rate.
+            this.requested.delete(index);
+            this.requestSentence(index);
+            return;
+          }
+          prepared = {
+            ...result,
+            audio,
+            duration: audio.length / result.sampleRate,
+            timings: scaleTimings(result.timings, rate),
+          };
+        }
+
         this.requested.delete(index);
         if (generation !== this.generation) return;
-        this.ready.set(index, result);
+        this.ready.set(index, prepared);
         this.drain();
       })
       .catch((error: unknown) => {
-        this.requested.delete(index);
         if (generation !== this.generation) return;
+        this.requested.delete(index);
         if (isJobCancelled(error)) return;
         if (index <= this.currentIndex + 1) {
           this.fail(error, 'This sentence could not be narrated.');
@@ -547,7 +613,7 @@ export class PlayerSession {
           wordProgress: wordProgressAt(located.entry.timings, elapsed),
           sentenceProgress:
             located.entry.duration > 0 ? Math.min(1, elapsed / located.entry.duration) : 0,
-          positionSeconds: this.prefixDurations[this.currentIndex] + elapsed,
+          positionSeconds: ((this.prefixDurations[this.currentIndex] ?? 0) + elapsed) / this.rate,
         };
         for (const listener of this.frameListeners) listener(frame);
       }
@@ -580,7 +646,8 @@ export class PlayerSession {
     void releaseWakeLock();
     void cancelPending();
     this.saveProgress();
-    updatePositionState(this.snapshot.durationSeconds, this.snapshot.durationSeconds);
+    const duration = this.playbackDuration();
+    updatePositionState(duration, duration, this.rate);
   }
 
   private fail(error: unknown, fallback: string): void {
@@ -618,8 +685,8 @@ export class PlayerSession {
       sentence,
       modelProgress: this.modelProgress,
       error: this.error,
-      positionSeconds: this.prefixDurations[this.currentIndex] ?? 0,
-      durationSeconds: this.durationSeconds,
+      positionSeconds: (this.prefixDurations[this.currentIndex] ?? 0) / this.rate,
+      durationSeconds: this.playbackDuration(),
     };
     for (const listener of this.listeners) listener();
   }
@@ -647,14 +714,20 @@ export class PlayerSession {
     const now = performance.now();
     if (now - this.lastPositionUpdate < 1000) return;
     this.lastPositionUpdate = now;
-    updatePositionState(this.durationSeconds, this.positionSeconds());
+    updatePositionState(this.playbackDuration(), this.positionSeconds(), this.rate);
+  }
+
+  private playbackDuration(): number {
+    return this.contentDuration / this.rate;
   }
 
   private positionSeconds(): number {
     const located = this.scheduler.locate();
-    return located && located.entry.index === this.currentIndex
-      ? (this.prefixDurations[this.currentIndex] ?? 0) + located.elapsed
-      : (this.prefixDurations[this.currentIndex] ?? 0);
+    const content =
+      located && located.entry.index === this.currentIndex
+        ? (this.prefixDurations[this.currentIndex] ?? 0) + located.elapsed
+        : (this.prefixDurations[this.currentIndex] ?? 0);
+    return content / this.rate;
   }
 
   private configureMedia(book: BookDocument): void {

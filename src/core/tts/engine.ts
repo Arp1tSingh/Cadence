@@ -20,7 +20,13 @@ import {
 } from './constants';
 import { alignWords, offsetTimings } from './timing';
 import { concatPcm } from './pcm';
-import { getVoice, normalizeVoiceSelection, phonemeLanguageFor, voiceKeyFor } from './voices';
+import {
+  getVoice,
+  normalizeVoiceSelection,
+  phonemeLanguageFor,
+  voiceKeyFor,
+  voiceWeightsFor,
+} from './voices';
 
 const MODEL_BASE_URL = `https://huggingface.co/${KOKORO_MODEL_ID}/resolve/main/`;
 const STYLE_ROWS = 510;
@@ -109,17 +115,21 @@ async function styleFor(selection: VoiceSelection, tokenCount: number): Promise<
   const voice = normalizeVoiceSelection(selection);
   const row = Math.min(STYLE_ROWS - 1, Math.max(0, tokenCount - 2));
   const offset = row * STYLE_WIDTH;
-  const primary = await loadVoiceVector(voice.primary);
+  const weights = voiceWeightsFor(voice);
 
-  if (!voice.secondary) {
-    return primary.slice(offset, offset + STYLE_WIDTH);
+  if (weights.length === 1) {
+    const vector = await loadVoiceVector(weights[0].id);
+    return vector.slice(offset, offset + STYLE_WIDTH);
   }
 
-  const secondary = await loadVoiceVector(voice.secondary);
-  const weight = Math.min(1, Math.max(0, voice.blend ?? 0.5));
+  const vectors = await Promise.all(weights.map((entry) => loadVoiceVector(entry.id)));
   const style = new Float32Array(STYLE_WIDTH);
-  for (let index = 0; index < STYLE_WIDTH; index += 1) {
-    style[index] = primary[offset + index] * (1 - weight) + secondary[offset + index] * weight;
+  for (let weightIndex = 0; weightIndex < weights.length; weightIndex += 1) {
+    const vector = vectors[weightIndex];
+    const weight = weights[weightIndex].weight;
+    for (let index = 0; index < STYLE_WIDTH; index += 1) {
+      style[index] += vector[offset + index] * weight;
+    }
   }
   return style;
 }

@@ -7,6 +7,7 @@ import {
   phonemeLanguageFor,
   voiceKeyFor,
   voiceLabelFor,
+  voiceWeightsFor,
 } from './voices';
 
 describe('voice catalog', () => {
@@ -43,6 +44,80 @@ describe('normalizeVoiceSelection', () => {
       normalizeVoiceSelection({ primary: 'af_heart', secondary: 'bf_emma', blend: -2 }).blend,
     ).toBe(0);
   });
+
+  it('keeps a third voice only when it is distinct and a second voice exists', () => {
+    expect(
+      normalizeVoiceSelection({
+        primary: 'af_heart',
+        secondary: 'bf_emma',
+        tertiary: 'am_michael',
+        tertiaryWeight: 0.4,
+      }).tertiary,
+    ).toBe('am_michael');
+
+    // The pad is a triangle; a third voice without a second cannot be mixed.
+    expect(
+      normalizeVoiceSelection({ primary: 'af_heart', tertiary: 'am_michael' }).tertiary,
+    ).toBeUndefined();
+    expect(
+      normalizeVoiceSelection({ primary: 'af_heart', secondary: 'bf_emma', tertiary: 'bf_emma' })
+        .tertiary,
+    ).toBeUndefined();
+  });
+
+  it('clamps the tertiary share so the other voices keep a voice', () => {
+    expect(
+      normalizeVoiceSelection({
+        primary: 'af_heart',
+        secondary: 'bf_emma',
+        tertiary: 'am_michael',
+        tertiaryWeight: 2,
+      }).tertiaryWeight,
+    ).toBe(0.95);
+    expect(
+      normalizeVoiceSelection({
+        primary: 'af_heart',
+        secondary: 'bf_emma',
+        tertiary: 'am_michael',
+        tertiaryWeight: -1,
+      }).tertiaryWeight,
+    ).toBeUndefined();
+  });
+});
+
+describe('voiceWeightsFor', () => {
+  it('gives a solo narrator all the weight', () => {
+    expect(voiceWeightsFor({ primary: 'af_heart' })).toEqual([{ id: 'af_heart', weight: 1 }]);
+  });
+
+  it('splits two voices by the blend', () => {
+    const weights = voiceWeightsFor({ primary: 'af_bella', secondary: 'bf_emma', blend: 0.25 });
+    expect(weights).toHaveLength(2);
+    expect(weights[0]).toEqual({ id: 'af_bella', weight: 0.75 });
+    expect(weights[1].id).toBe('bf_emma');
+    expect(weights[1].weight).toBeCloseTo(0.25);
+  });
+
+  it('normalises three voices to sum to one', () => {
+    const weights = voiceWeightsFor({
+      primary: 'af_bella',
+      secondary: 'bf_emma',
+      blend: 0.5,
+      tertiary: 'am_michael',
+      tertiaryWeight: 0.4,
+    });
+    expect(weights.map((entry) => entry.id)).toEqual(['af_bella', 'bf_emma', 'am_michael']);
+    expect(weights[2].weight).toBeCloseTo(0.4);
+    expect(weights[0].weight).toBeCloseTo(0.3);
+    expect(weights[1].weight).toBeCloseTo(0.3);
+    expect(weights.reduce((sum, entry) => sum + entry.weight, 0)).toBeCloseTo(1);
+  });
+
+  it('drops silent voices from the mix', () => {
+    expect(
+      voiceWeightsFor({ primary: 'af_heart', secondary: 'bf_emma', blend: 1 }),
+    ).toEqual([{ id: 'bf_emma', weight: 1 }]);
+  });
 });
 
 describe('voiceKeyFor', () => {
@@ -55,12 +130,35 @@ describe('voiceKeyFor', () => {
       'af_bella+bm_george-47',
     );
   });
+
+  it('encodes the third voice and its share without unsafe characters', () => {
+    const key = voiceKeyFor({
+      primary: 'af_bella',
+      secondary: 'bm_george',
+      blend: 0.4,
+      tertiary: 'am_michael',
+      tertiaryWeight: 0.35,
+    });
+    expect(key).toBe('af_bella+bm_george-40+am_michael-35');
+    expect(key).not.toMatch(/[\\/:*?"<>|]/);
+  });
 });
 
 describe('voiceLabelFor', () => {
   it('describes a blended narrator with both shares', () => {
     const label = voiceLabelFor({ primary: 'af_bella', secondary: 'bf_emma', blend: 0.3 });
     expect(label).toBe('Bella 70% · Emma 30%');
+  });
+
+  it('lists all three shares for the mixer', () => {
+    const label = voiceLabelFor({
+      primary: 'af_bella',
+      secondary: 'bf_emma',
+      blend: 0.5,
+      tertiary: 'am_michael',
+      tertiaryWeight: 0.2,
+    });
+    expect(label).toBe('Bella 40% · Emma 40% · Michael 20%');
   });
 });
 

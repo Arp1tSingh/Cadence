@@ -213,9 +213,10 @@
    * never triggers React renders per word.
    */
   .lyric-word {
+    --lyric-dim: 32%;
     position: relative;
     display: inline-block;
-    color: color-mix(in srgb, var(--color-ink) 32%, transparent);
+    color: color-mix(in srgb, var(--color-ink) var(--lyric-dim), transparent);
     transition: color 220ms ease;
   }
 
@@ -230,11 +231,48 @@
   }
 
   .lyric-word[data-active='true'] {
-    color: color-mix(in srgb, var(--color-ink) 46%, transparent);
+    --lyric-dim: 46%;
   }
 
   .lyric-word[data-active='true'] .lyric-word-fill {
     text-shadow: 0 0 28px color-mix(in srgb, var(--color-brand) 45%, transparent);
+  }
+
+  /* Book Page mode keeps the same sweep on a warmer, higher-contrast page. */
+  .book-word {
+    --lyric-dim: 55%;
+  }
+
+  .book-word[data-active='true'] {
+    --lyric-dim: 72%;
+  }
+
+  .book-sentence {
+    border-radius: 4px;
+    transition:
+      opacity 520ms ease,
+      filter 520ms ease;
+  }
+
+  .book-sentence[data-state='active'] {
+    opacity: 1;
+  }
+
+  .book-sentence[data-state='past'] {
+    opacity: 0.34;
+    filter: blur(1.2px);
+  }
+
+  .book-sentence[data-state='far-past'] {
+    opacity: 0.24;
+  }
+
+  .book-sentence[data-state='next'] {
+    opacity: 0.64;
+  }
+
+  .book-sentence[data-state='later'] {
+    opacity: 0.44;
   }
 
   .lyric-fade {

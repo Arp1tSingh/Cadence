@@ -160,10 +160,11 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 - **Phase 0 — complete.** Vite 7 + React 19 + TypeScript 5.9 + Tailwind v4 scaffold, design tokens, shared UI primitives, theme engine, error boundary, COOP/COEP headers, deploy configs, and asset copying.
 - **Phase 1 — complete.** Domain schema, IndexedDB/OPFS storage, text normalization and speech expansion, sentence/word/chunk builder, EPUB parser (nav + NCX + heading-level splitting), PDF layout engine, palette extraction, parser worker/client, bookshelf, import sheet, window dropzones, and progress UI.
 - **Phase 2 — complete.** Kokoro TTS worker with a foreground/prefetch queue, OPFS Int16 audio cache keyed by engine version + voice + text hash, Web Audio scheduler, player session (lookahead, buffering, seek, chapter/voice restart), MediaSession and Wake Lock, settings/player stores, and the player UI (lyrics stage, glass dock, chapter drawer, voice sheet, model setup, error overlay).
-- Real-browser QA (Edge, `playwright-core`): q8 WASM download (88 MB), model init, word-level playback, prefetch cache growth, pause/resume, next sentence, chapter jump, and per-voice caching (`af_heart` + `bf_emma`) verified with real Kokoro inference.
+- **Phase 3 — complete.** Offline WSOLA time-stretching in `stretch.worker.ts` with a rate-aware session timeline and speed sheet; Book Page reader with memoized chapter paragraphs, imperative sentence/word sweep, auto-scroll plus resume pill, and tap-to-seek; per-chapter synthesis rings in the drawer; and a barycentric 3-voice style pad that blends two or three 256-float voice rows.
+- Real-browser QA (Edge, `playwright-core`): q8 WASM download (88 MB), model init, word-level playback, prefetch cache growth, pause/resume, next sentence, chapter jump, per-voice caching (`af_heart` + `bf_emma`), 1.5× WSOLA duration (52,082 s → 34,721 s), Book Page word sweep and tap seek, 76 chapter rows with cache rings, and a 3-voice blend cached under `af_heart+bf_emma-48+am_michael-47` with all three shares in the dock.
 - Measured on the QA laptop (i5-8265U, 15 W, 4 threads): Kokoro q8 WASM runs at roughly **0.2× real time** (3.7 s of audio in ~19–25 s), and fp32 WASM is not faster. Threading scales only ~1.1×. The UI now labels this state instead of showing an indefinite spinner.
-- `npm run typecheck && npm run lint && npm run test && npm run build` passes (14 files, 78 tests, zero lint warnings).
-- Next: Phase 3 — Live Lyrics polish (Book Page mode), 2D voice-blend pad, WSOLA speed control.
+- `npm run typecheck && npm run lint && npm run test && npm run build` passes (17 files, 105 tests, zero lint warnings).
+- Next: Phase 4 — export studio (MP3/M4B + `chpl`), lexicon/normalization rules/settings, model-tier selector, cache management/caps.
 
 ## Phase Tracker
 
@@ -172,7 +173,7 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 | 0. Scaffold + design system | Complete | Vite/React/Tailwind, primitives, theme, isolation headers |
 | 1. Ingestion + bookshelf | Complete | EPUB + PDF, OPFS/IDB, import UX, palette covers |
 | 2. TTS + playback | Complete | Kokoro worker, OPFS PCM cache, scheduler, player UI |
-| 3. Live Lyrics + voice/speed | In progress | |
+| 3. Live Lyrics + voice/speed | Complete | Book Page, WSOLA speed, 3-voice pad, chapter cache rings |
 | 4. Export + settings + polish | Not started | |
 
 ## Progress Log
@@ -214,6 +215,16 @@ Add one dated entry per milestone. Keep entries short: what changed, what passed
 - Performance observation: on the 15 W i5-8265U QA laptop, q8 WASM is ~0.2× real time and fp32 is not faster; 4 threads add ~10% over 1. The dock now says "Synthesizing on this device — slower than real time…" after 6 s of buffering.
 - Verified: 14 test files / 78 tests, typecheck, lint (0 warnings), production build.
 
+### 2026-11-13 — Phase 3 Live Lyrics + voice/speed
+- Added offline WSOLA (`wsola.ts`, 10 tests) and `stretch.worker.ts`/`stretchClient.ts`. Speed changes never re-synthesize or shift pitch; timings are scaled with the audio.
+- `PlayerSession` now maps playback time to 1× content time for seeking, positions, and MediaSession, stretches as synthesis resolves, and keeps in-flight inference when nothing is scheduled instead of restarting the timeline.
+- Added `SpeedSheet` (0.5–3×, 0.05 steps, presets, finish-time preview) and a dock speed pill; `playbackRate` persists in settings.
+- Added Book Page reader mode: memoized chapter paragraphs, active-sentence illumination, imperative word sweep, auto-scroll with a resume pill, and tap-to-seek. `lyricsMode` persists; the header toggles focus lyrics ↔ Book Page.
+- Added per-chapter cache rings and spinner in the chapter drawer, filtered by the active narrator.
+- Added a 3-voice barycentric mixer (`VoiceBlendPad`), `tertiary`/`tertiaryWeight` in `VoiceSelection`, normalized `voiceWeightsFor()` blending, three-voice cache keys and labels, and auto-scroll to the pad when enabled. The engine sums N style rows.
+- Real-browser QA: 1.5× duration exactly `52082.03 / 1.5 = 34721.35`, playback resumed, Book Page 24 sentences with word sweep and tap seek, auto-scroll pill, 76 chapter rows (75 rings + 1 spinner), and a 3-voice mix synthesized under `af_heart+bf_emma-48+am_michael-47` with `Narrated by Heart 28% · Emma 25% · Michael 47%`.
+- Verified: 17 test files / 105 tests, typecheck, lint (0 warnings), production build (stretch worker emitted).
+
 ## Context-Management Protocol
 
 This project is large; protect context deliberately:
@@ -253,5 +264,7 @@ This project is large; protect context deliberately:
 - Full-book PCM cache can reach multiple GB; add a cache cap and clear-after-export option.
 - WASM-only devices may synthesize slower than real time; measured ~0.2× real time on a 15 W i5 with q8, so buffering can last tens of seconds per sentence. The dock labels this, but the next real lever is WebGPU (real adapter) and/or a faster WASM configuration.
 - Seek, voice change, and pause call `cancelPending()`; the one in-flight inference still finishes and is cached, so a switch can lag by at most one sentence.
+- Blended voices are phonemized in the primary voice's language; the style rows mix timbre and prosody but not phoneme inventories. Mixing en-US and en-GB voices therefore uses the primary accent's phonemes.
+- Speed changes restart the current sentence only when audio is already scheduled; if synthesis is still running, the request resolves at the new rate and no inference is wasted.
 - PDF layout extraction is heuristic; test with varied real-world PDFs.
 - Large books stress IndexedDB/OPFS; avoid loading entire audio or all sentences into memory at once.

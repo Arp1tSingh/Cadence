@@ -35,6 +35,7 @@ type PlayerState = {
   seekToSeconds: (seconds: number) => void;
   seekBy: (seconds: number) => void;
   setVolume: (volume: number) => void;
+  setPlaybackRate: (rate: number) => void;
   applyVoice: (voice: Parameters<typeof playerSession.setVoice>[0]) => void;
 };
 
@@ -52,6 +53,7 @@ export const usePlayerStore = create<PlayerState>()(
         voice: settings.voice,
         tier: settings.modelTier,
         volume: settings.volume,
+        rate: settings.playbackRate,
       });
       set((state) => {
         state.snapshot = playerSession.getSnapshot();
@@ -88,6 +90,11 @@ export const usePlayerStore = create<PlayerState>()(
     setVolume: (volume) => {
       useSettingsStore.getState().setVolume(volume);
       playerSession.setVolume(volume);
+    },
+
+    setPlaybackRate: (rate) => {
+      useSettingsStore.getState().setPlaybackRate(rate);
+      playerSession.setRate(rate);
     },
 
     applyVoice: (voice) => {

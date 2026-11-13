@@ -16,6 +16,7 @@ import type { PlayerSnapshot } from '@/core/player/session';
 import { useSettingsStore } from '@/store/settingsStore';
 import { usePlayerFrame } from '@/store/playerStore';
 import { voiceLabelFor } from '@/core/tts/voices';
+import { formatPlaybackRate } from '@/core/audio/rate';
 import { BookCover } from '@/components/bookshelf/BookCover';
 import { IconButton } from '@/components/ui/IconButton';
 import { cn } from '@/lib/cn';
@@ -31,6 +32,7 @@ type PlayerDockProps = {
   onSeekTo: (seconds: number) => void;
   onOpenChapters: () => void;
   onOpenVoice: () => void;
+  onOpenSpeed: () => void;
 };
 
 export function PlayerDock({
@@ -43,8 +45,10 @@ export function PlayerDock({
   onSeekTo,
   onOpenChapters,
   onOpenVoice,
+  onOpenSpeed,
 }: PlayerDockProps) {
   const voice = useSettingsStore((state) => state.voice);
+  const playbackRate = useSettingsStore((state) => state.playbackRate);
   const rangeRef = useRef<HTMLInputElement>(null);
   const elapsedRef = useRef<HTMLSpanElement>(null);
   const remainingRef = useRef<HTMLSpanElement>(null);
@@ -255,6 +259,15 @@ export function PlayerDock({
         </div>
 
         <div className="mt-1 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onOpenSpeed}
+            aria-label={`Playback speed, ${formatPlaybackRate(playbackRate)}`}
+            className="shrink-0 rounded-pill border border-hairline px-1.5 py-[2px] text-[9.5px] font-semibold tabular-nums text-ink-secondary transition-colors duration-150 hover:bg-surface-muted hover:text-ink"
+          >
+            {formatPlaybackRate(playbackRate)}
+          </button>
+
           <span
             ref={elapsedRef}
             className="w-9 shrink-0 text-right text-[9.5px] tabular-nums text-ink-tertiary"
