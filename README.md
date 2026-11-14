@@ -2,6 +2,8 @@
 
 **A 100% local, browser-native eBook-to-audiobook studio with Apple Music-style Live Lyrics.**
 
+**Live demo:** https://cadence-six-dun.vercel.app/
+
 Cadence turns `.epub` and `.pdf` books into studio-quality audiobooks directly in the browser using Kokoro-82M, WebGPU/WASM inference, OPFS storage, and a 60fps live-lyrics player. There is no backend. Books, audio, and reading progress never leave your device.
 
 ## Status
@@ -18,13 +20,17 @@ See [AGENTS.md](./AGENTS.md) for the engineering guide, architecture, and curren
 
 ## Deployment
 
-Cadence is a static Vite SPA with no server-side code. Import the repository at [vercel.com/new](https://vercel.com/new) or run:
+Cadence is deployed on Vercel at [cadence-six-dun.vercel.app](https://cadence-six-dun.vercel.app/). The `main` branch is linked through Vercel's Git integration, so every push to `main` creates a production deployment.
+
+Cadence is a static Vite SPA with no server-side code. To deploy your own copy, import the repository at [vercel.com/new](https://vercel.com/new) or run:
 
 ```bash
 npx vercel --prod
 ```
 
 No environment variables are required. [`vercel.json`](./vercel.json) pins the install (`npm ci`), build (`npm run build`), and output (`dist`) settings, and sends COOP/COEP headers so the deployed app is cross-origin isolated and can use multi-threaded WASM. Hosts that cannot set those headers still work with a single WASM thread, just slower. A Netlify config is included for parity.
+
+PDF imports use the document outline for chapter titles and boundaries when it has at least two chapter-like entries, and the cover is rendered on an OffscreenCanvas inside the parser worker. Image-only illustration pages have no text layer, so they are not narrated.
 
 For a deployment served from a subpath, set `VITE_BASE` at build time (for example `VITE_BASE=/cadence/`).
 
