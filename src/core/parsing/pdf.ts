@@ -1,10 +1,21 @@
 import { getDocument, PDFWorker, VerbosityLevel } from 'pdfjs-dist';
-import type { PDFPageProxy } from 'pdfjs-dist';
+import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import PdfJsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker';
 import type { BookMetadata, ChapterNode } from '@/types/domain';
 import { buildChapter } from './sentences';
-import { buildParagraphs, buildPdfChapters, collectFurniture, detectBodyFontSize, estimateLineGap, groupPageItems, stripFurniture, textItemToLayoutItem } from './pdf-layout';
-import type { PdfLine, PdfTextItem } from './pdf-layout';
+import {
+  buildOutlineChapters,
+  buildParagraphs,
+  buildPdfChapters,
+  collectFurniture,
+  detectBodyFontSize,
+  estimateLineGap,
+  groupPageItems,
+  selectOutlineChapterRanges,
+  stripFurniture,
+  textItemToLayoutItem,
+} from './pdf-layout';
+import type { PdfLine, PdfOutlineEntry, PdfTextItem } from './pdf-layout';
 import { normalizeWhitespace } from './text';
 
 export class PdfParseError extends Error {
@@ -43,6 +54,83 @@ type RawPdfInfo = Record<string, unknown>;
 const ASSET_BASE = import.meta.env.BASE_URL;
 const CMAP_URL = `${ASSET_BASE}pdfjs/cmaps/`;
 const STANDARD_FONTS_URL = `${ASSET_BASE}pdfjs/standard_fonts/`;
+
+type CanvasLike = OffscreenCanvas | HTMLCanvasElement;
+type CanvasEntry = {
+  canvas: CanvasLike;
+  context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+};
+
+/**
+ * PDF.js falls back to DOMCanvasFactory, which calls `document.createElement`.
+ * This worker has no DOM, so inline images must be composited on
+ * OffscreenCanvas instead.
+ */
+class WorkerCanvasFactory {
+  create(width: number, height: number): CanvasEntry {
+    const canvas: CanvasLike | null =
+      typeof OffscreenCanvas !== 'undefined'
+        ? new OffscreenCanvas(width, height)
+        : typeof document !== 'undefined'
+          ? document.createElement('canvas')
+          : null;
+    if (!canvas) throw new Error('Canvas rendering is unavailable in this browser.');
+
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d') as
+      | CanvasRenderingContext2D
+      | OffscreenCanvasRenderingContext2D
+      | null;
+    if (!context) throw new Error('A 2D canvas context is unavailable.');
+    return { canvas, context };
+  }
+
+  reset(entry: CanvasEntry, width: number, height: number): void {
+    entry.canvas.width = width;
+    entry.canvas.height = height;
+  }
+
+  destroy(entry: CanvasEntry): void {
+    entry.canvas.width = 0;
+    entry.canvas.height = 0;
+  }
+}
+
+type PdfOutlineNodes = Awaited<ReturnType<PDFDocumentProxy['getOutline']>>;
+type PdfOutlineNode = PdfOutlineNodes[number];
+
+async function collectOutline(
+  pdf: PDFDocumentProxy,
+  items: PdfOutlineNode[],
+  depth = 0,
+): Promise<PdfOutlineEntry[]> {
+  const entries: PdfOutlineEntry[] = [];
+
+  for (const item of items) {
+    let pageIndex: number | null = null;
+    try {
+      if (Array.isArray(item.dest)) {
+        pageIndex = await pdf.getPageIndex(item.dest[0]);
+      } else if (typeof item.dest === 'string') {
+        const destination = await pdf.getDestination(item.dest);
+        if (destination) pageIndex = await pdf.getPageIndex(destination[0]);
+      }
+    } catch {
+      pageIndex = null;
+    }
+
+    const title = normalizeWhitespace(item.title ?? '');
+    if (title && pageIndex != null && Number.isInteger(pageIndex)) {
+      entries.push({ title, pageIndex, depth });
+    }
+    if (item.items.length > 0) {
+      entries.push(...(await collectOutline(pdf, item.items, depth + 1)));
+    }
+  }
+
+  return entries;
+}
 
 function cleanPdfText(value: unknown): string {
   return typeof value === 'string' ? normalizeWhitespace(value) : '';
@@ -125,6 +213,7 @@ export async function parsePdf(
     useWorkerFetch: true,
     verbosity: VerbosityLevel.ERRORS,
     worker: pdfWorker,
+    CanvasFactory: WorkerCanvasFactory,
   });
 
   let pdf;
@@ -179,7 +268,8 @@ export async function parsePdf(
     }
 
     const furniture = collectFurniture(pages);
-    const lines = pages.flatMap((page) => stripFurniture(page, furniture));
+    const cleanPages = pages.map((page) => stripFurniture(page, furniture));
+    const lines = cleanPages.flat();
     const totalChars = lines.reduce((total, line) => total + line.text.replace(/\s+/g, '').length, 0);
     const totalWords = lines.reduce(
       (total, line) => total + line.text.split(/\s+/).filter(Boolean).length,
@@ -197,8 +287,19 @@ export async function parsePdf(
 
     const bodySize = detectBodyFontSize(lines);
     const typicalGap = estimateLineGap(lines, bodySize);
-    const paragraphs = buildParagraphs(lines, bodySize, typicalGap);
-    const drafts = buildPdfChapters(paragraphs);
+
+    const outline = await pdf
+      .getOutline()
+      .then((items) => collectOutline(pdf, items))
+      .catch(() => [] as PdfOutlineEntry[]);
+    const outlineRanges = selectOutlineChapterRanges(outline, pageCount);
+    let drafts =
+      outlineRanges.length >= 2
+        ? buildOutlineChapters(cleanPages, outlineRanges, bodySize, typicalGap)
+        : [];
+    if (drafts.length === 0) {
+      drafts = buildPdfChapters(buildParagraphs(lines, bodySize, typicalGap));
+    }
 
     const chapters: ChapterNode[] = [];
     for (const draft of drafts) {

@@ -34,6 +34,8 @@ models/
 # Sample books and downloads
 samples/
 downloads/
+test/
+Test/
 
 # Editor and OS files
 .vscode/*

@@ -97,7 +97,35 @@ function detectColumnSplit(items: PdfTextItem[], pageWidth?: number): number | n
   return pageWidth / 2;
 }
 
-type MutableLine = PdfLine & { endX: number; trailingSpace: boolean };
+type MutableLine = PdfLine & {
+  endX: number;
+  trailingSpace: boolean;
+  sizeWeights: Map<number, number>;
+};
+
+/**
+ * Drop caps and decorative initials share a baseline with body text but are
+ * drawn much larger. Weighting sizes by character count keeps the line at the
+ * body size, so a single oversized glyph cannot turn a paragraph into a
+ * heading (or a false chapter break).
+ */
+function dominantHeight(weights: Map<number, number>, fallback: number): number {
+  let best = fallback;
+  let bestWeight = 0;
+  for (const [size, weight] of weights) {
+    if (weight > bestWeight || (weight === bestWeight && size > best)) {
+      best = size;
+      bestWeight = weight;
+    }
+  }
+  return best;
+}
+
+function addSizeWeight(line: MutableLine, height: number, text: string): void {
+  const bucket = Math.round(height * 2) / 2;
+  line.sizeWeights.set(bucket, (line.sizeWeights.get(bucket) ?? 0) + Math.max(1, text.length));
+  line.height = dominantHeight(line.sizeWeights, line.height);
+}
 
 function groupColumn(items: PdfTextItem[], pageIndex: number, column: number): PdfLine[] {
   const sorted = [...items].sort((a, b) => b.y - a.y || a.x - b.x);
@@ -125,7 +153,7 @@ function groupColumn(items: PdfTextItem[], pageIndex: number, column: number): P
       line.x = Math.min(line.x, item.x);
       line.endX = Math.max(line.endX, item.x + item.width);
       line.width = line.endX - line.x;
-      line.height = Math.max(line.height, item.height);
+      addSizeWeight(line, item.height, text);
       line.trailingSpace = trailingSpace;
       continue;
     }
@@ -140,14 +168,16 @@ function groupColumn(items: PdfTextItem[], pageIndex: number, column: number): P
       column,
       endX: item.x + item.width,
       trailingSpace,
+      sizeWeights: new Map([[Math.round(item.height * 2) / 2, Math.max(1, text.length)]]),
     });
   }
 
   return lines
     .filter((line) => line.text.length > 0)
     .map((line) => {
-      const { endX, trailingSpace, ...rest } = line;
+      const { endX, trailingSpace, sizeWeights, ...rest } = line;
       void trailingSpace;
+      void sizeWeights;
       return { ...rest, width: Math.max(0, endX - rest.x) };
     });
 }
@@ -501,4 +531,155 @@ export function buildPdfChapters(
   });
 
   return chapters;
+}
+
+export type PdfOutlineEntry = {
+  title: string;
+  pageIndex: number;
+  depth?: number;
+};
+
+export type PdfOutlineChapterRange = {
+  title: string;
+  startPage: number;
+  endPage: number;
+};
+
+const OUTLINE_FRONT_BACK_MATTER =
+  /^(?:table of contents|contents|cover|title page|copyright|credits?|dedication|acknowledg|about the author|newsletter|index|color inserts?|illustrations?|also by|advertisement)\b/i;
+
+/** Outline titles worth treating as narrated chapters, not front/back matter. */
+export function looksLikeOutlineChapterTitle(title: string): boolean {
+  const clean = normalizeWhitespace(title);
+  if (!clean || clean.length > 160) return false;
+  if (OUTLINE_FRONT_BACK_MATTER.test(clean)) return false;
+  if (looksLikeChapterHeading(clean)) return true;
+  if (/^(?:extra|bonus|special|side)\s+chapter\b/i.test(clean)) return true;
+  if (/^(?:interlude|side story)\b/i.test(clean)) return true;
+  if (/^\d{1,2}(?:\.\d{1,3})*[.)]?\s+\p{Lu}/u.test(clean)) return true;
+  return false;
+}
+
+/**
+ * Converts a PDF outline into page ranges. Front matter before the first
+ * chapter is dropped, each chapter ends where the next one starts, and the
+ * final chapter stops at the first back-matter outline entry.
+ */
+export function selectOutlineChapterRanges(
+  entries: PdfOutlineEntry[],
+  pageCount: number,
+): PdfOutlineChapterRange[] {
+  if (pageCount <= 0) return [];
+
+  const valid = entries
+    .map((entry, order) => ({
+      title: normalizeWhitespace(entry.title),
+      pageIndex: entry.pageIndex,
+      depth: entry.depth ?? 0,
+      order,
+    }))
+    .filter(
+      (entry) =>
+        entry.title.length > 0 &&
+        Number.isInteger(entry.pageIndex) &&
+        entry.pageIndex >= 0 &&
+        entry.pageIndex < pageCount,
+    )
+    .sort((a, b) => a.pageIndex - b.pageIndex || a.depth - b.depth || a.order - b.order);
+
+  // A part and its first chapter often share a page. Keep the deeper, more
+  // specific entry so chapter titles win over part titles.
+  const byStart = new Map<number, (typeof valid)[number]>();
+  for (const entry of valid) {
+    if (!looksLikeOutlineChapterTitle(entry.title)) continue;
+    const existing = byStart.get(entry.pageIndex);
+    if (!existing || entry.depth > existing.depth) byStart.set(entry.pageIndex, entry);
+  }
+
+  const starts = [...byStart.values()].sort((a, b) => a.pageIndex - b.pageIndex);
+  if (starts.length < 2) return [];
+
+  return starts
+    .map((entry, index) => {
+      const next = starts[index + 1];
+      let endPage = next?.pageIndex ?? pageCount;
+      if (!next) {
+        const boundary = valid.find(
+          (candidate) =>
+            candidate.pageIndex > entry.pageIndex &&
+            !looksLikeOutlineChapterTitle(candidate.title),
+        );
+        if (boundary) endPage = boundary.pageIndex;
+      }
+      return {
+        title: entry.title,
+        startPage: entry.pageIndex,
+        endPage: Math.min(pageCount, Math.max(entry.pageIndex + 1, endPage)),
+      };
+    })
+    .filter((range) => range.endPage > range.startPage);
+}
+
+function titleKey(text: string): string {
+  return normalizeWhitespace(text)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+/**
+ * Drops the printed chapter heading lines that precede the body, using the
+ * outline title as the source of truth. Handles titles split across lines,
+ * e.g. "Chapter 3:" + "Opening Move".
+ */
+export function stripChapterTitleParagraphs(
+  paragraphs: PdfParagraph[],
+  title: string,
+): PdfParagraph[] {
+  const target = titleKey(title);
+  if (!target) return paragraphs;
+
+  let index = 0;
+  let matched = '';
+  while (index < paragraphs.length && index < 4) {
+    const key = titleKey(paragraphs[index].text);
+    if (!key) break;
+    const next = `${matched}${key}`;
+    if (!target.startsWith(next)) break;
+    matched = next;
+    index += 1;
+    if (matched === target) break;
+  }
+
+  return index > 0 ? paragraphs.slice(index) : paragraphs;
+}
+
+/** Builds chapters from outline page ranges, independent of heading heuristics. */
+export function buildOutlineChapters(
+  pages: PdfLine[][],
+  ranges: PdfOutlineChapterRange[],
+  bodySize: number,
+  typicalGap = bodySize * 1.2,
+): PdfChapterDraft[] {
+  const drafts: PdfChapterDraft[] = [];
+
+  for (const range of ranges) {
+    const lines = pages.slice(range.startPage, range.endPage).flat();
+    if (lines.length === 0) continue;
+
+    const paragraphs = stripChapterTitleParagraphs(
+      buildParagraphs(lines, bodySize, typicalGap),
+      range.title,
+    );
+    if (paragraphs.length === 0) continue;
+
+    const words = paragraphs.reduce(
+      (total, paragraph) => total + countWords(paragraph.text),
+      0,
+    );
+    if (words < 8) continue;
+
+    drafts.push({ title: range.title, blocks: paragraphBlocks(paragraphs) });
+  }
+
+  return drafts;
 }

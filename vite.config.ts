@@ -68,6 +68,11 @@ export default defineConfig({
   },
   server: {
     headers: isolationHeaders,
+    watch: {
+      // Browser QA profiles and sample books contain locked databases and
+      // multi-megabyte files that must never enter the dev watcher.
+      ignored: ['**/.cache/**', '**/samples/qa-novel/**', '**/test/**', '**/Test/**'],
+    },
   },
   preview: {
     headers: isolationHeaders,
