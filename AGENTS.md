@@ -306,6 +306,7 @@ Add one dated entry per milestone. Keep entries short: what changed, what passed
 - Fixed the reload-resume race: `playerStore.openBook` now publishes `bookId` and the restored snapshot together after `playerSession.open()` completes, so `BookPage` no longer mounts against an empty snapshot with no active sentence.
 - README documents the development-only console diagnostics.
 - Verified: typecheck, lint (0 warnings), 23 passed + 1 skipped test files, 161 passed + 2 skipped tests, production build; `dist/` contains no `[Cadence]` diagnostics.
+- Pushed `ae60152`; CI run 43694889310 passed.
 - Next: cross-browser QA sweep (Safari/iOS gesture and safe-area behavior, Firefox WASM fallback).
 
 ## Context-Management Protocol
