@@ -34,6 +34,11 @@ import { isJobCancelled } from '@/core/tts/cancel';
 import { speechProfileKey } from '@/core/tts/speechProfile';
 import { wordIndexAt, wordProgressAt } from '@/core/tts/timing';
 import { normalizeVoiceSelection } from '@/core/tts/voices';
+import {
+  INITIAL_PREROLL_SECONDS,
+  nextPreroll,
+  prerollReached,
+} from './preroll';
 
 export type PlayerStatus =
   | 'idle'
@@ -126,6 +131,8 @@ export class PlayerSession {
   private generation = 0;
   private requested = new Set<number>();
   private ready = new Map<number, SynthesizedSentence>();
+  /** Seconds of narration to build up before the clock resumes. */
+  private preroll = INITIAL_PREROLL_SECONDS;
 
   private scheduler = new AudioScheduler();
   private rafId: number | null = null;
@@ -178,6 +185,7 @@ export class PlayerSession {
     this.playIntent = false;
     this.error = null;
     this.modelProgress = null;
+    this.preroll = INITIAL_PREROLL_SECONDS;
 
     this.flat = [];
     this.prefixDurations = [];
@@ -213,6 +221,21 @@ export class PlayerSession {
     this.status = 'idle';
     this.emit();
     this.configureMedia(book);
+    this.preloadModel();
+  }
+
+  /**
+   * Warms the narration model while the book is being opened instead of
+   * waiting for the first play. It is deliberately fire-and-forget: a failed
+   * download must not fail the book, and `play()` retries with an error path.
+   */
+  private preloadModel(): void {
+    const tier = this.tier;
+    void ensureTtsModel(tier, (progress) => this.updateModelProgress(progress))
+      .then(() => {
+        if (this.book && this.tier === tier) loadedTier = tier;
+      })
+      .catch(() => undefined);
   }
 
   async play(): Promise<void> {
@@ -414,6 +437,7 @@ export class PlayerSession {
     this.requestCursor = 0;
     this.contentDuration = 0;
     this.rate = 1;
+    this.preroll = INITIAL_PREROLL_SECONDS;
     this.status = 'idle';
     this.modelProgress = null;
     this.error = null;
@@ -438,6 +462,10 @@ export class PlayerSession {
     if (this.total === 0) return;
     this.stopClock();
     this.scheduler.reset();
+    // Freeze the clock while the new position buffers: sources scheduled
+    // ahead must not start playing under the buffering UI, and a frozen
+    // clock makes `bufferedSeconds()` accumulate the preroll target.
+    void this.scheduler.suspend();
     this.generation += 1;
     this.requested.clear();
     this.ready.clear();
@@ -586,7 +614,11 @@ export class PlayerSession {
       if (
         this.playIntent &&
         this.status === 'buffering' &&
-        this.scheduler.hasAudioAfter(this.scheduler.currentTime)
+        prerollReached(
+          this.scheduler.bufferedSeconds(),
+          this.preroll,
+          this.nextScheduleIndex >= this.total,
+        )
       ) {
         void this.startClock();
       }
@@ -651,6 +683,17 @@ export class PlayerSession {
 
     this.updateMediaPosition();
 
+    // A book whose remaining sentences are silent produces no scheduled audio
+    // at all; finish instead of buffering forever on an empty timeline.
+    if (
+      this.nextScheduleIndex >= this.total &&
+      this.ready.size === 0 &&
+      this.scheduler.tail() === 0
+    ) {
+      this.finish();
+      return;
+    }
+
     const tail = this.scheduler.tail();
     if (now >= tail && tail > 0) {
       const finished = this.nextScheduleIndex >= this.total;
@@ -660,6 +703,9 @@ export class PlayerSession {
       }
       if (this.status === 'playing') {
         this.setStatus('buffering');
+        // The buffer ran dry: ask for more lead before resuming, so the next
+        // stretch of playback is longer instead of stuttering per sentence.
+        this.preroll = nextPreroll(this.preroll);
         void this.scheduler.suspend();
         setPlaybackState('paused');
       }

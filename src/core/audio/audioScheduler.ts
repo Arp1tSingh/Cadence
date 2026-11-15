@@ -40,6 +40,7 @@ export class AudioScheduler {
   private entries: ScheduledSentence[] = [];
   private readonly startDelaySeconds: number;
   private pendingVolume: number;
+  private clockOps: Promise<void> = Promise.resolve();
 
   constructor(options: AudioSchedulerOptions = {}) {
     this.startDelaySeconds = options.startDelaySeconds ?? 0.08;
@@ -65,7 +66,7 @@ export class AudioScheduler {
   /** Creates the AudioContext. Must be called from a user gesture. */
   async ensureContext(): Promise<AudioContext> {
     if (this.context && this.context.state !== 'closed') {
-      if (this.context.state === 'suspended') await this.context.resume();
+      if (this.context.state === 'suspended') await this.resume();
       return this.context;
     }
 
@@ -153,6 +154,15 @@ export class AudioScheduler {
     return this.entries.some((entry) => entry.endAt > time);
   }
 
+  /**
+   * Seconds of narration already queued past the clock position. The context
+   * is suspended while buffering, so `currentTime` is frozen and this value
+   * only grows as synthesis resolves.
+   */
+  bufferedSeconds(): number {
+    return Math.max(0, this.tail() - this.currentTime);
+  }
+
   locate(time = this.currentTime): SentenceTimelinePosition | null {
     for (let index = this.entries.length - 1; index >= 0; index -= 1) {
       const entry = this.entries[index];
@@ -175,12 +185,27 @@ export class AudioScheduler {
     this.entries = [];
   }
 
-  async suspend(): Promise<void> {
-    if (this.context?.state === 'running') await this.context.suspend();
+  /**
+   * Context transitions are serialised: buffering can queue a `suspend()` and
+   * the arrival of enough audio can queue a `resume()` in the same frame. A
+   * bare pair of promises could otherwise resolve out of order and freeze the
+   * clock while the UI thinks it is playing.
+   */
+  suspend(): Promise<void> {
+    return this.queueClockOp(async () => {
+      if (this.context?.state === 'running') await this.context.suspend();
+    });
   }
 
-  async resume(): Promise<void> {
-    if (this.context?.state === 'suspended') await this.context.resume();
+  resume(): Promise<void> {
+    return this.queueClockOp(async () => {
+      if (this.context?.state === 'suspended') await this.context.resume();
+    });
+  }
+
+  private queueClockOp(op: () => Promise<void>): Promise<void> {
+    this.clockOps = this.clockOps.then(op, op);
+    return this.clockOps;
   }
 
   async close(): Promise<void> {
