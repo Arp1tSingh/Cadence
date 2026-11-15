@@ -1,5 +1,5 @@
 import { expose } from 'comlink';
-import type { BookDocument, BookFormat } from '@/types/domain';
+import type { BookDocument, BookFormat, BookIllustration } from '@/types/domain';
 import type {
   ParseOutcome,
   ParseProgress,
@@ -8,9 +8,14 @@ import type {
 } from '@/types/parser';
 import { MAX_IMPORT_BYTES, PARSER_VERSION } from '@/core/parsing/constants';
 import { EpubParseError, parseEpub } from '@/core/parsing/epub';
-import { parsePdf, PdfParseError } from '@/core/parsing/pdf';
+import { parsePdf, PdfParseError, type PdfIllustration } from '@/core/parsing/pdf';
 import { resolvePalette } from '@/core/parsing/palette';
-import { saveBookCover, saveBookSource, deleteBookBlobs } from '@/core/storage/opfs';
+import {
+  deleteBookBlobs,
+  saveBookCover,
+  saveBookIllustration,
+  saveBookSource,
+} from '@/core/storage/opfs';
 
 function toHex(bytes: ArrayBuffer): string {
   return [...new Uint8Array(bytes)]
@@ -121,6 +126,7 @@ async function parse(
     let metadata;
     let chapters;
     let cover: { bytes: Uint8Array; mimeType: string; extension: string } | undefined;
+    let parsedIllustrations: PdfIllustration[] = [];
 
     try {
       if (format === 'epub') {
@@ -137,15 +143,24 @@ async function parse(
         const result = await parsePdf(bytes, {
           fileName: file.name,
           onPageProgress: (page, total) => {
-            report('chapters', 0.06 + (page / Math.max(1, total)) * 0.7, 'Extracting pages…', {
+            report('chapters', 0.06 + (page / Math.max(1, total)) * 0.66, 'Extracting pages…', {
               chapter: page,
               chapterCount: total,
             });
+          },
+          onIllustrationProgress: (processed, total) => {
+            report(
+              'illustrations',
+              0.72 + (processed / Math.max(1, total)) * 0.04,
+              'Extracting illustrations…',
+              { chapter: processed, chapterCount: total },
+            );
           },
         });
         metadata = result.metadata;
         chapters = result.chapters;
         cover = result.cover;
+        parsedIllustrations = result.illustrations;
       }
     } catch (error) {
       await deleteBookBlobs(id).catch(() => undefined);
@@ -160,16 +175,45 @@ async function parse(
       };
     }
 
-    report('palette', 0.82, cover ? 'Sampling cover colors…' : 'Choosing a palette…');
+    report('palette', 0.8, cover ? 'Sampling cover colors…' : 'Choosing a palette…');
     const palette = await resolvePalette(cover, `${metadata.title}:${file.name}`);
 
     let coverPath: string | undefined;
     if (cover) {
-      report('cover', 0.88, 'Saving cover…');
+      report('cover', 0.84, 'Saving cover…');
       coverPath = await saveBookCover(id, cover.extension, cover.bytes, cover.mimeType);
     }
 
-    report('sentences', 0.92, 'Building timed sentences…');
+    const illustrations: BookIllustration[] = [];
+    for (let index = 0; index < parsedIllustrations.length; index += 1) {
+      const illustration = parsedIllustrations[index];
+      report(
+        'illustrations',
+        0.88 + ((index + 1) / Math.max(1, parsedIllustrations.length)) * 0.04,
+        `Saving illustration ${index + 1} of ${parsedIllustrations.length}…`,
+        { chapter: index + 1, chapterCount: parsedIllustrations.length },
+      );
+      try {
+        const path = await saveBookIllustration(
+          id,
+          `${illustration.pageIndex + 1}.${illustration.extension}`,
+          illustration.bytes,
+          illustration.mimeType,
+        );
+        illustrations.push({
+          pageIndex: illustration.pageIndex,
+          path,
+          width: illustration.width,
+          height: illustration.height,
+          mimeType: illustration.mimeType,
+          byteSize: illustration.bytes.byteLength,
+        });
+      } catch {
+        // Illustrations enhance playback; a storage hiccup should not lose the book.
+      }
+    }
+
+    report('sentences', 0.94, 'Building timed sentences…');
     const totals = summarize(chapters);
     const now = Date.now();
 
@@ -181,6 +225,7 @@ async function parse(
       chapters,
       palette,
       ...(coverPath ? { coverPath } : {}),
+      ...(illustrations.length > 0 ? { illustrations } : {}),
       sourcePath,
       byteSize: file.size,
       createdAt: now,

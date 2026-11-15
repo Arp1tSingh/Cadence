@@ -7,6 +7,8 @@ import { useExportStore } from '@/store/exportStore';
 import { MeshBackdrop } from './MeshBackdrop';
 import { LyricsStage } from './LyricsStage';
 import { BookPage } from './BookPage';
+import { IllustrationStage } from './IllustrationStage';
+import { illustrationForSentence } from '@/core/player/illustrations';
 import { PlayerDock } from './PlayerDock';
 import { ChapterDrawer } from './ChapterDrawer';
 import { VoiceSheet } from './VoiceSheet';
@@ -35,6 +37,7 @@ export function PlayerView({ book }: PlayerViewProps) {
   const seekToSentence = usePlayerStore((state) => state.seekToSentence);
   const lyricsMode = useSettingsStore((state) => state.lyricsMode);
   const setLyricsMode = useSettingsStore((state) => state.setLyricsMode);
+  const showIllustrations = useSettingsStore((state) => state.showIllustrations);
   const openSettings = useSettingsStore((state) => state.openSettings);
   const openExport = useExportStore((state) => state.openStudio);
 
@@ -51,6 +54,12 @@ export function PlayerView({ book }: PlayerViewProps) {
         chapter.paragraphs.flatMap((paragraph) => paragraph.sentences),
       ),
     [book],
+  );
+
+  const illustration = useMemo(
+    () =>
+      showIllustrations ? (illustrationForSentence(book, snapshot.sentence) ?? null) : null,
+    [book, showIllustrations, snapshot.sentence],
   );
 
   const currentIndex = snapshot.sentenceIndex;
@@ -199,6 +208,8 @@ export function PlayerView({ book }: PlayerViewProps) {
             : 'px-2 pb-40 pt-0 sm:px-4 sm:pb-44',
         )}
       >
+        <IllustrationStage illustration={illustration} />
+
         {lyricsMode === 'focus' ? (
           <LyricsStage
             sentence={snapshot.sentence}

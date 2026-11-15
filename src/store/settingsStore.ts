@@ -23,6 +23,8 @@ type SettingsState = {
   volume: number;
   playbackRate: number;
   lyricsMode: LyricsMode;
+  /** Show a full-page PDF illustration while the preceding page is narrated. */
+  showIllustrations: boolean;
   lexicon: LexiconEntry[];
   normalizationRules: NormalizationRules;
   cacheCapBytes: number;
@@ -34,6 +36,7 @@ type SettingsState = {
   setVolume: (volume: number) => void;
   setPlaybackRate: (rate: number) => void;
   setLyricsMode: (mode: LyricsMode) => void;
+  setShowIllustrations: (show: boolean) => void;
   addLexiconEntry: (draft: LexiconDraft) => void;
   updateLexiconEntry: (id: string, patch: Partial<LexiconDraft>) => void;
   removeLexiconEntry: (id: string) => void;
@@ -125,6 +128,7 @@ export const useSettingsStore = create<SettingsState>()(
     volume: 1,
     playbackRate: 1,
     lyricsMode: 'focus',
+    showIllustrations: true,
     lexicon: [],
     normalizationRules: DEFAULT_NORMALIZATION_RULES,
     cacheCapBytes: DEFAULT_CACHE_CAP_BYTES,
@@ -133,17 +137,27 @@ export const useSettingsStore = create<SettingsState>()(
 
     load: async () => {
       try {
-        const [tier, voice, volume, playbackRate, lyricsMode, lexicon, rules, cacheCap] =
-          await Promise.all([
-            getSetting<ModelTier>('modelTier'),
-            getSetting<VoiceSelection>('voice'),
-            getSetting<number>('volume'),
-            getSetting<number>('playbackRate'),
-            getSetting<LyricsMode>('lyricsMode'),
-            getSetting<LexiconEntry[]>('lexicon'),
-            getSetting<NormalizationRules>('normalizationRules'),
-            getSetting<number>('cacheCapBytes'),
-          ]);
+        const [
+          tier,
+          voice,
+          volume,
+          playbackRate,
+          lyricsMode,
+          showIllustrations,
+          lexicon,
+          rules,
+          cacheCap,
+        ] = await Promise.all([
+          getSetting<ModelTier>('modelTier'),
+          getSetting<VoiceSelection>('voice'),
+          getSetting<number>('volume'),
+          getSetting<number>('playbackRate'),
+          getSetting<LyricsMode>('lyricsMode'),
+          getSetting<boolean>('showIllustrations'),
+          getSetting<LexiconEntry[]>('lexicon'),
+          getSetting<NormalizationRules>('normalizationRules'),
+          getSetting<number>('cacheCapBytes'),
+        ]);
         set((state) => {
           state.modelTier =
             tier === 'auto' || tier === 'quality' || tier === 'balanced' ? tier : 'balanced';
@@ -152,6 +166,8 @@ export const useSettingsStore = create<SettingsState>()(
           state.playbackRate =
             typeof playbackRate === 'number' ? clampPlaybackRate(playbackRate) : 1;
           state.lyricsMode = lyricsMode === 'book' ? 'book' : 'focus';
+          state.showIllustrations =
+            typeof showIllustrations === 'boolean' ? showIllustrations : true;
           state.lexicon = normalizeLexicon(lexicon);
           state.normalizationRules = normalizeRules(rules);
           state.cacheCapBytes = normalizeCap(cacheCap);
@@ -200,6 +216,13 @@ export const useSettingsStore = create<SettingsState>()(
         state.lyricsMode = mode;
       });
       void putSetting('lyricsMode', mode).catch(() => undefined);
+    },
+
+    setShowIllustrations: (show) => {
+      set((state) => {
+        state.showIllustrations = show;
+      });
+      void putSetting('showIllustrations', show).catch(() => undefined);
     },
 
     addLexiconEntry: (draft) => {

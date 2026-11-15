@@ -121,6 +121,18 @@ describe('paragraph grouping', () => {
     expect(paragraphs[2].text).toBe('A new paragraph begins here. It has another line.');
   });
 
+  it('tracks the last page of a paragraph that crosses a page break', () => {
+    const page0 = groupPageItems([item('The road continued', 72, 700)], 0, 612);
+    const page1 = groupPageItems([item('through the valley.', 72, 700)], 1, 612);
+
+    const paragraphs = buildParagraphs([...page0, ...page1], 10, 14);
+
+    expect(paragraphs).toHaveLength(1);
+    expect(paragraphs[0].pageIndex).toBe(0);
+    expect(paragraphs[0].pageEndIndex).toBe(1);
+    expect(paragraphs[0].text).toBe('The road continued through the valley.');
+  });
+
   it('keeps two-column reading order', () => {
     const items: PdfTextItem[] = [];
     for (let index = 0; index < 10; index += 1) {

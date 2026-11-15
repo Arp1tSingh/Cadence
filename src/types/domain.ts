@@ -35,6 +35,8 @@ export type SentenceNode = {
   charCount: number;
   wordCount: number;
   estimatedDuration: number;
+  /** Zero-based source PDF page; absent for EPUBs and older imports. */
+  pageIndex?: number;
 };
 
 export type ParagraphNode = {
@@ -43,6 +45,20 @@ export type ParagraphNode = {
   level?: number;
   displayText: string;
   sentences: SentenceNode[];
+  /** First and last source PDF pages this paragraph came from. */
+  pageIndex?: number;
+  pageEndIndex?: number;
+};
+
+/** A rendered, image-heavy PDF page kept in OPFS next to the book source. */
+export type BookIllustration = {
+  /** Zero-based source page index. */
+  pageIndex: number;
+  path: string;
+  width: number;
+  height: number;
+  mimeType: string;
+  byteSize: number;
 };
 
 export type ChapterNode = {
@@ -76,6 +92,8 @@ export type BookDocument = {
   chapters: ChapterNode[];
   palette: CoverPalette;
   coverPath?: string;
+  /** Full-page illustrations detected during PDF import, sorted by page. */
+  illustrations?: BookIllustration[];
   sourcePath: string;
   byteSize: number;
   createdAt: number;

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'r
 import {
   Check,
   Database,
+  Images,
   Plus,
   Sparkles,
   Trash2,
@@ -146,6 +147,8 @@ function NarrationPanel() {
   const setTier = useSettingsStore((state) => state.setModelTier);
   const voice = useSettingsStore((state) => state.voice);
   const rate = useSettingsStore((state) => state.playbackRate);
+  const showIllustrations = useSettingsStore((state) => state.showIllustrations);
+  const setShowIllustrations = useSettingsStore((state) => state.setShowIllustrations);
   const setRate = usePlayerStore((state) => state.setPlaybackRate);
   const applyVoice = usePlayerStore((state) => state.applyVoice);
   const webgpu = useMemo(hasWebGpu, []);
@@ -261,6 +264,34 @@ function NarrationPanel() {
             Speed is applied with WSOLA time-stretching, so the voice keeps its pitch.
           </span>
         </label>
+      </section>
+
+      <section>
+        <div className="flex items-center gap-2">
+          <Images size={15} className="text-ink-tertiary" aria-hidden="true" />
+          <h3 className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-ink-tertiary">
+            Reading
+          </h3>
+        </div>
+        <div className="mt-2.5 flex items-start justify-between gap-4 rounded-card border border-hairline bg-surface-muted/40 px-3.5 py-3">
+          <div className="min-w-0">
+            <p className="text-[12.5px] font-semibold">Show PDF illustrations</p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-ink-secondary">
+              When the next page is full-page artwork, it appears above the lyrics or Book
+              Page while the previous page is narrated.
+            </p>
+          </div>
+          <Switch
+            checked={showIllustrations}
+            onCheckedChange={setShowIllustrations}
+            label="Show PDF illustrations"
+          />
+        </div>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-ink-tertiary">
+          Illustrations are extracted during PDF import, stored on this device, and shown
+          only for pages that are mostly artwork. Existing PDFs need to be imported again
+          to gain them.
+        </p>
       </section>
     </div>
   );
@@ -526,8 +557,8 @@ function StoragePanel() {
             <p className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
               {formatBytes(storage.usage)} used
               {storage.quota > 0 ? ` of ${formatBytes(storage.quota)} available` : ''}.
-              Books, covers, model files, voice styles, rendered audio, and exports all
-              live in local browser storage.
+              Books, covers, PDF illustrations, model files, voice styles, rendered audio,
+              and exports all live in local browser storage.
             </p>
           </div>
         </div>

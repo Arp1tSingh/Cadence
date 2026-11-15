@@ -251,7 +251,30 @@ export type BuildSentenceParams = {
   paragraphIndex: number;
   sentenceIndex: number;
   text: string;
+  /** Zero-based source PDF page for this sentence. */
+  pageIndex?: number;
 };
+
+/**
+ * Maps a sentence's character span to a source page. Most paragraphs sit on
+ * one page; a paragraph that crosses a page break is divided proportionally so
+ * the player can reveal the following illustration at roughly the right time.
+ */
+export function sentencePage(
+  start: number,
+  end: number,
+  length: number,
+  startPage?: number,
+  endPage?: number,
+): number | undefined {
+  if (startPage === undefined) return undefined;
+  const last = Math.max(startPage, endPage ?? startPage);
+  if (last === startPage) return startPage;
+
+  const ratio = length > 0 ? Math.min(1, Math.max(0, (start + end) / (2 * length))) : 0;
+  const page = startPage + Math.floor(ratio * (last - startPage + 1));
+  return Math.max(startPage, Math.min(last, page));
+}
 
 export type SpokenWordSeed = Pick<WordToken, 'id' | 'text' | 'isWord'>;
 
@@ -292,6 +315,7 @@ export function buildSentence({
   paragraphIndex,
   sentenceIndex,
   text,
+  pageIndex,
 }: BuildSentenceParams): SentenceNode {
   const displayText = normalizeBlockText(text);
   const tokens = tokenizeDisplayText(displayText);
@@ -318,6 +342,7 @@ export function buildSentence({
     charCount: displayText.length,
     wordCount,
     estimatedDuration: estimateSentenceDuration(wordCount),
+    ...(pageIndex !== undefined ? { pageIndex } : {}),
   };
 }
 
@@ -327,6 +352,9 @@ export type BuildParagraphParams = {
   text: string;
   kind?: ParagraphKind;
   level?: number;
+  /** Zero-based first and last source PDF pages for this paragraph. */
+  pageIndex?: number;
+  pageEndIndex?: number;
 };
 
 export function buildParagraph({
@@ -335,13 +363,34 @@ export function buildParagraph({
   text,
   kind = 'paragraph',
   level,
+  pageIndex,
+  pageEndIndex,
 }: BuildParagraphParams): ParagraphNode | null {
   const displayText = normalizeBlockText(text);
   if (!displayText) return null;
 
-  const sentences = splitSentences(displayText).map((sentence, index) =>
-    buildSentence({ chapterIndex, paragraphIndex, sentenceIndex: index, text: sentence }),
-  );
+  const sentenceTexts = splitSentences(displayText);
+  let cursor = 0;
+  const sentences = sentenceTexts.map((sentence, index) => {
+    const found = displayText.indexOf(sentence, cursor);
+    const start = found === -1 ? cursor : found;
+    const end = start + sentence.length;
+    cursor = end;
+    const sentencePageIndex = sentencePage(
+      start,
+      end,
+      displayText.length,
+      pageIndex,
+      pageEndIndex,
+    );
+    return buildSentence({
+      chapterIndex,
+      paragraphIndex,
+      sentenceIndex: index,
+      text: sentence,
+      pageIndex: sentencePageIndex,
+    });
+  });
 
   if (sentences.length === 0) return null;
 
@@ -351,6 +400,8 @@ export function buildParagraph({
     ...(kind === 'heading' && level ? { level } : {}),
     displayText,
     sentences,
+    ...(pageIndex !== undefined ? { pageIndex } : {}),
+    ...(pageEndIndex !== undefined && pageEndIndex !== pageIndex ? { pageEndIndex } : {}),
   };
 }
 
@@ -358,6 +409,8 @@ export type RawBlock = {
   kind: ParagraphKind;
   text: string;
   level?: number;
+  pageIndex?: number;
+  pageEndIndex?: number;
 };
 
 export type BuildChapterParams = {
@@ -383,6 +436,8 @@ export function buildChapter({
       text: block.text,
       kind: block.kind,
       level: block.level,
+      pageIndex: block.pageIndex,
+      pageEndIndex: block.pageEndIndex,
     });
     if (!paragraph) continue;
     paragraphs.push(paragraph);

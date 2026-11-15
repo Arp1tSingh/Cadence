@@ -1,8 +1,13 @@
-import { getDocument, PDFWorker, VerbosityLevel } from 'pdfjs-dist';
+import { getDocument, OPS, PDFWorker, VerbosityLevel } from 'pdfjs-dist';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import PdfJsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker';
 import type { BookMetadata, ChapterNode } from '@/types/domain';
 import { buildChapter } from './sentences';
+import {
+  hasLargeIllustrationImage,
+  isIllustrationCandidate,
+  type PdfImageDimensions,
+} from './pdf-illustrations';
 import {
   buildOutlineChapters,
   buildParagraphs,
@@ -32,12 +37,20 @@ export type PdfCover = {
   bytes: Uint8Array;
   mimeType: string;
   extension: string;
+  width: number;
+  height: number;
+};
+
+export type PdfIllustration = PdfCover & {
+  /** Zero-based source page index. */
+  pageIndex: number;
 };
 
 export type PdfParseResult = {
   metadata: BookMetadata;
   chapters: ChapterNode[];
   cover?: PdfCover;
+  illustrations: PdfIllustration[];
   pageCount: number;
   totalWords: number;
 };
@@ -45,7 +58,9 @@ export type PdfParseResult = {
 export type PdfParseOptions = {
   fileName: string;
   onPageProgress?: (page: number, total: number) => void;
+  onIllustrationProgress?: (processed: number, total: number) => void;
   renderCover?: boolean;
+  renderIllustrations?: boolean;
 };
 
 type RawPdfInfo = Record<string, unknown>;
@@ -164,13 +179,21 @@ function readMetadata(info: RawPdfInfo, fileName: string, firstPageLine: string)
   };
 }
 
-async function renderCover(page: PDFPageProxy): Promise<PdfCover | undefined> {
+type RenderImageOptions = {
+  maxLongEdge: number;
+  quality: number;
+};
+
+async function renderPageImage(
+  page: PDFPageProxy,
+  { maxLongEdge, quality }: RenderImageOptions,
+): Promise<PdfCover | undefined> {
   if (typeof OffscreenCanvas === 'undefined') return undefined;
 
   try {
     const base = page.getViewport({ scale: 1 });
     if (!base.width || !base.height) return undefined;
-    const scale = Math.min(2, Math.max(0.5, 900 / base.height));
+    const scale = Math.min(2, Math.max(0.5, maxLongEdge / Math.max(base.width, base.height)));
     const viewport = page.getViewport({ scale });
     const canvas = new OffscreenCanvas(Math.round(viewport.width), Math.round(viewport.height));
     const context = canvas.getContext('2d');
@@ -183,21 +206,74 @@ async function renderCover(page: PDFPageProxy): Promise<PdfCover | undefined> {
       viewport,
     }).promise;
 
-    const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.88 });
+    const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
     return {
       bytes: new Uint8Array(await blob.arrayBuffer()),
       mimeType: 'image/jpeg',
       extension: 'jpg',
+      width: canvas.width,
+      height: canvas.height,
     };
   } catch {
-    // Rendering can fail on locked-down browsers; a generated palette is enough.
+    // Rendering can fail on locked-down browsers; the book still imports.
     return undefined;
   }
 }
 
+function renderCover(page: PDFPageProxy): Promise<PdfCover | undefined> {
+  return renderPageImage(page, { maxLongEdge: 900, quality: 0.88 });
+}
+
+function renderIllustration(page: PDFPageProxy): Promise<PdfCover | undefined> {
+  return renderPageImage(page, { maxLongEdge: 1600, quality: 0.84 });
+}
+
+type OperatorListLike = {
+  fnArray: Array<number>;
+  argsArray: Array<unknown>;
+};
+
+function numberFrom(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/** Reads the pixel dimensions PDF.js records for painted image XObjects. */
+function imageDimensionsFromOperators(operators: OperatorListLike): PdfImageDimensions[] {
+  const images: PdfImageDimensions[] = [];
+
+  operators.fnArray.forEach((fn, index) => {
+    const args = operators.argsArray[index];
+    if (!Array.isArray(args)) return;
+
+    if (fn === OPS.paintImageXObject) {
+      const width = numberFrom(args[1]);
+      const height = numberFrom(args[2]);
+      if (width && height) images.push({ width, height });
+      return;
+    }
+
+    if (fn === OPS.paintInlineImageXObject || fn === OPS.paintInlineImageXObjectGroup) {
+      const data = args[0];
+      if (!data || typeof data !== 'object') return;
+      const record = data as { width?: unknown; height?: unknown };
+      const width = numberFrom(record.width);
+      const height = numberFrom(record.height);
+      if (width && height) images.push({ width, height });
+    }
+  });
+
+  return images;
+}
+
 export async function parsePdf(
   bytes: ArrayBuffer,
-  { fileName, onPageProgress, renderCover: shouldRenderCover = true }: PdfParseOptions,
+  {
+    fileName,
+    onPageProgress,
+    onIllustrationProgress,
+    renderCover: shouldRenderCover = true,
+    renderIllustrations: shouldRenderIllustrations = true,
+  }: PdfParseOptions,
 ): Promise<PdfParseResult> {
   // pdf.js transfers the buffer to its worker and detaches it, so keep our own copy.
   // The generated pdf.js types mistype the constructor's `port` parameter, so
@@ -236,6 +312,7 @@ export async function parsePdf(
     if (pageCount === 0) throw new PdfParseError('invalid', 'This PDF contains no pages.');
 
     const pages: PdfLine[][] = [];
+    const pageTextChars: number[] = [];
     let firstPageLine = '';
     let cover: PdfCover | undefined;
 
@@ -245,11 +322,14 @@ export async function parsePdf(
         const viewport = page.getViewport({ scale: 1 });
         const text = await page.getTextContent({ includeMarkedContent: false });
         const items: PdfTextItem[] = [];
+        let pageChars = 0;
         for (const item of text.items) {
           if (!('str' in item)) continue;
+          pageChars += item.str.replace(/\s+/g, '').length;
           const layoutItem = textItemToLayoutItem(item);
           if (layoutItem) items.push(layoutItem);
         }
+        pageTextChars.push(pageChars);
 
         const lines = groupPageItems(items, pageNumber - 1, viewport.width);
         pages.push(lines);
@@ -315,6 +395,47 @@ export async function parsePdf(
       throw new PdfParseError('invalid', 'No readable text was found in this PDF.');
     }
 
+    const illustrations: PdfIllustration[] = [];
+    if (shouldRenderIllustrations) {
+      // Front-matter art before the first narrated chapter is never shown by
+      // the "previous page" rule, so keep it out of storage.
+      const rangeStart =
+        outlineRanges.length >= 2
+          ? Math.min(...outlineRanges.map((range) => range.startPage))
+          : 0;
+      const rangeEnd =
+        outlineRanges.length >= 2
+          ? Math.max(...outlineRanges.map((range) => range.endPage))
+          : pageCount;
+      const candidates = pageTextChars
+        .map((textChars, pageIndex) => ({ pageIndex, textChars }))
+        .filter(
+          ({ pageIndex, textChars }) =>
+            pageIndex >= rangeStart &&
+            pageIndex < rangeEnd &&
+            isIllustrationCandidate(pageIndex, textChars),
+        );
+
+      for (let index = 0; index < candidates.length; index += 1) {
+        const { pageIndex } = candidates[index];
+        try {
+          const page = await pdf.getPage(pageIndex + 1);
+          try {
+            const operators: OperatorListLike = await page.getOperatorList();
+            if (hasLargeIllustrationImage(imageDimensionsFromOperators(operators))) {
+              const rendered = await renderIllustration(page);
+              if (rendered) illustrations.push({ ...rendered, pageIndex });
+            }
+          } finally {
+            page.cleanup();
+          }
+        } catch {
+          // A single malformed page must not block the rest of the book.
+        }
+        onIllustrationProgress?.(index + 1, candidates.length);
+      }
+    }
+
     const pdfInfo = (await pdf
       .getMetadata()
       .then((meta) => meta.info)
@@ -324,6 +445,7 @@ export async function parsePdf(
     return {
       metadata,
       chapters,
+      illustrations,
       ...(cover ? { cover } : {}),
       pageCount,
       totalWords,

@@ -55,6 +55,8 @@ export type PdfLine = PdfTextItem & {
 export type PdfParagraph = {
   text: string;
   pageIndex: number;
+  /** Last source page when a paragraph continues across a page break. */
+  pageEndIndex?: number;
   isHeading: boolean;
   level: number;
 };
@@ -328,6 +330,7 @@ function looksLikeSectionTitle(text: string): boolean {
 type ParagraphAccumulator = {
   text: string;
   pageIndex: number;
+  lastPageIndex: number;
   column: number;
   isHeading: boolean;
   level: number;
@@ -366,6 +369,7 @@ export function buildParagraphs(
   ): ParagraphAccumulator => ({
     text: normalizeWhitespace(line.text),
     pageIndex: line.pageIndex,
+    lastPageIndex: line.pageIndex,
     column: line.column,
     isHeading,
     level,
@@ -379,6 +383,9 @@ export function buildParagraphs(
       paragraphs.push({
         text,
         pageIndex: current.pageIndex,
+        ...(current.lastPageIndex !== current.pageIndex
+          ? { pageEndIndex: current.lastPageIndex }
+          : {}),
         isHeading: current.isHeading,
         level: current.level,
       });
@@ -402,6 +409,7 @@ export function buildParagraphs(
       if (canMergeHeading && current) {
         current.text = joinPdfLines(current.text, text);
         current.lastLine = line;
+        current.lastPageIndex = line.pageIndex;
       } else {
         flush();
         current = makeAccumulator(line, true, level);
@@ -436,6 +444,7 @@ export function buildParagraphs(
     } else {
       current.text = joinPdfLines(current.text, text);
       current.lastLine = line;
+      current.lastPageIndex = line.pageIndex;
     }
   }
 
@@ -453,13 +462,19 @@ function isChapterStart(paragraph: PdfParagraph): boolean {
 
 function paragraphBlocks(paragraphs: PdfParagraph[]): RawBlock[] {
   return paragraphs.map((paragraph) => {
+    const pages = {
+      pageIndex: paragraph.pageIndex,
+      ...(paragraph.pageEndIndex !== undefined
+        ? { pageEndIndex: paragraph.pageEndIndex }
+        : {}),
+    };
     if (paragraph.isHeading) {
-      return { kind: 'heading', text: paragraph.text, level: paragraph.level };
+      return { kind: 'heading', text: paragraph.text, level: paragraph.level, ...pages };
     }
     const text = paragraph.text.trim();
     const quoted =
       /^["“«]/.test(text) && /["”»]$/.test(text) && text.length > 2;
-    return { kind: quoted ? 'quote' : 'paragraph', text };
+    return { kind: quoted ? 'quote' : 'paragraph', text, ...pages };
   });
 }
 

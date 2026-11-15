@@ -6,6 +6,7 @@ export type ParseStage =
   | 'chapters'
   | 'sentences'
   | 'cover'
+  | 'illustrations'
   | 'palette'
   | 'saving'
   | 'done';

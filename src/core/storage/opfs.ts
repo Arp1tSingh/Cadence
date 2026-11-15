@@ -1,5 +1,6 @@
 const BOOKS_DIR = 'books';
 const COVERS_DIR = 'covers';
+const ILLUSTRATIONS_DIR = 'illustrations';
 const CACHE_DIR = 'cache';
 const MODELS_DIR = 'models';
 const EXPORTS_DIR = 'exports';
@@ -159,6 +160,12 @@ export const coverSegments = (bookId: string, extension: string): string[] => [
   `${bookId}.${extension}`,
 ];
 
+export const illustrationSegments = (bookId: string, fileName: string): string[] => [
+  ILLUSTRATIONS_DIR,
+  bookId,
+  fileName,
+];
+
 export const exportSegments = (fileName: string): string[] => [EXPORTS_DIR, fileName];
 
 export const modelSegments = (...path: string[]): string[] => [MODELS_DIR, ...path];
@@ -190,6 +197,24 @@ export async function readBookCover(coverPath: string): Promise<Blob | null> {
   return opfs.readBlob(coverPath.split('/'));
 }
 
+export async function saveBookIllustration(
+  bookId: string,
+  fileName: string,
+  bytes: Uint8Array,
+  mimeType: string,
+): Promise<string> {
+  const segments = illustrationSegments(bookId, fileName);
+  await opfs.write(segments, new Blob([bytes.slice()], { type: mimeType }));
+  return segments.join('/');
+}
+
+export async function readBookIllustration(
+  illustrationPath: string,
+  mimeType = 'image/jpeg',
+): Promise<Blob | null> {
+  return opfs.readBlob(illustrationPath.split('/'), mimeType);
+}
+
 export async function deleteBookBlobs(bookId: string): Promise<void> {
   const booksDir = await opfs.ensureDir(BOOKS_DIR);
   for await (const [name] of booksDir.entries()) {
@@ -205,6 +230,7 @@ export async function deleteBookBlobs(bookId: string): Promise<void> {
     }
   }
 
+  await opfs.removeDir(ILLUSTRATIONS_DIR, bookId);
   await opfs.removeDir(CACHE_DIR, bookId);
 }
 

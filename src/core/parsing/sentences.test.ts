@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildChapter,
+  buildParagraph,
   buildSentence,
+  sentencePage,
   splitSentences,
   tokenizeDisplayText,
 } from './sentences';
@@ -84,6 +86,34 @@ describe('buildSentence', () => {
         sentence.ttsText.slice(chunk.startTtsOffset, chunk.endTtsOffset),
       );
     }
+  });
+});
+
+describe('PDF page provenance', () => {
+  it('keeps single-page paragraphs on their source page', () => {
+    expect(sentencePage(0, 10, 40, 7)).toBe(7);
+    expect(sentencePage(30, 40, 40, 7, 7)).toBe(7);
+  });
+
+  it('splits a cross-page paragraph at roughly the page boundary', () => {
+    expect(sentencePage(0, 10, 20, 4, 5)).toBe(4);
+    expect(sentencePage(11, 20, 20, 4, 5)).toBe(5);
+    expect(sentencePage(0, 10, 30, 4, 6)).toBe(4);
+    expect(sentencePage(20, 30, 30, 4, 6)).toBe(6);
+  });
+
+  it('assigns page indexes to each sentence and paragraph', () => {
+    const paragraph = buildParagraph({
+      chapterIndex: 0,
+      paragraphIndex: 0,
+      text: 'Alpha one. Beta two.',
+      pageIndex: 4,
+      pageEndIndex: 5,
+    });
+
+    expect(paragraph?.pageIndex).toBe(4);
+    expect(paragraph?.pageEndIndex).toBe(5);
+    expect(paragraph?.sentences.map((sentence) => sentence.pageIndex)).toEqual([4, 5]);
   });
 });
 
