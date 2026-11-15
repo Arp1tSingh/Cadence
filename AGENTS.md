@@ -294,6 +294,7 @@ Add one dated entry per milestone. Keep entries short: what changed, what passed
 - Settings: `showIllustrations` (default on) persisted in IndexedDB, surfaced under Narration → Reading with explanatory copy; toggling re-renders the player immediately.
 - Real-browser QA (Edge, final production build, fresh profile) on *Mushoku Tensei Vol. 16*: import 19 s, 10 chapters, 71,125 words, 170,895-byte cover, 7 artwork pages extracted (18, 42, 109, 147, 188, 209, 231) at 891×1271 JPEG / 132–223 KB. Front inserts 4–9 and the page-233 logo are excluded. Sentence `ch01_p108_s02` on page 17 showed the page-18 artwork (`naturalWidth 891`, blob URL) in both Book Page and focus lyrics; the card measures 256×365 px on a 1360×960 viewport and 228×320 px on a 390×844 mobile viewport with no overflow. The settings toggle hid and restored it instantly; zero console/page errors.
 - Verified: typecheck, lint (0 warnings), 23 test files / 161 tests, production build.
+- Pushed `b613440` (feature) and `131043b` (docs); CI run 43683119416 passed and Vercel production deployment `dpl_GhZkUegUoDBbvSZAkRkL8Fp7ukXQ` for `131043b` is READY. `https://cadence-six-dun.vercel.app/` serves `index-DrgLc7c8.js` with COOP/COEP, reports `crossOriginIsolated: true`, shows the Reading toggle default-on, and logs zero console errors.
 - Next: cross-browser QA sweep (Safari/iOS, Firefox).
 
 ## Context-Management Protocol
