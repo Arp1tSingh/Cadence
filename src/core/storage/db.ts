@@ -151,6 +151,35 @@ export async function listAllAudioCacheEntries(): Promise<AudioCacheEntry[]> {
   return db.getAll('audioCache');
 }
 
+/** The fields cache accounting needs; word timings stay unread. */
+export type AudioCacheSizeEntry = Pick<
+  AudioCacheEntry,
+  'key' | 'bookId' | 'voiceKey' | 'size' | 'createdAt'
+>;
+
+/**
+ * Streams the cache index and keeps only size/identity fields, so a scan does
+ * not hold every entry's word timings in memory at once.
+ */
+export async function listAudioCacheSizes(): Promise<AudioCacheSizeEntry[]> {
+  const db = await getDb();
+  const entries: AudioCacheSizeEntry[] = [];
+  const transaction = db.transaction('audioCache');
+  let cursor = await transaction.store.openCursor();
+  while (cursor) {
+    const value = cursor.value;
+    entries.push({
+      key: value.key,
+      bookId: value.bookId,
+      voiceKey: value.voiceKey,
+      size: value.size,
+      createdAt: value.createdAt,
+    });
+    cursor = await cursor.continue();
+  }
+  return entries;
+}
+
 export async function getAudioCacheEntry(key: string): Promise<AudioCacheEntry | undefined> {
   const db = await getDb();
   return db.get('audioCache', key);

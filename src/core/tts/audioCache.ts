@@ -2,13 +2,15 @@ import type { AudioCacheEntry, WordTiming } from '@/types/domain';
 import {
   deleteAudioCacheEntry,
   getAudioCacheEntry,
-  listAllAudioCacheEntries,
+  listAudioCacheSizes,
   putAudioCacheEntry,
 } from '@/core/storage/db';
 import { audioCacheSegments, opfs } from '@/core/storage/opfs';
 import { SAMPLE_RATE } from './constants';
-import { selectCacheEvictions } from './cachePolicy';
-import { int16ToFloat32, float32ToInt16 } from './pcm';
+import { totalCacheBytes, selectCacheEvictions } from './cachePolicy';
+import { cacheOverCap, netCacheBytes } from './cacheAccounting';
+import { encodeSentenceCache, type SentenceCachePayload } from './cacheEncoding';
+import { int16ToFloat32 } from './pcm';
 
 export type CachedSentenceAudio = {
   audio: Float32Array;
@@ -17,7 +19,9 @@ export type CachedSentenceAudio = {
 };
 
 /** Deletes both the OPFS PCM file and the IndexedDB metadata row. */
-export async function deleteCachedAudioFile(entry: AudioCacheEntry): Promise<void> {
+export async function deleteCachedAudioFile(
+  entry: Pick<AudioCacheEntry, 'bookId' | 'voiceKey' | 'key'>,
+): Promise<void> {
   await opfs
     .remove(audioCacheSegments(entry.bookId, entry.voiceKey, entry.key))
     .catch(() => undefined);
@@ -43,6 +47,10 @@ export async function readSentenceCache(
   const bytes = await opfs.read(audioCacheSegments(bookId, voiceKey, cacheKey));
   if (!bytes || bytes.byteLength === 0) {
     await deleteAudioCacheEntry(cacheKey).catch(() => undefined);
+    // Keep the running total honest after dropping an orphaned row.
+    if (cacheBytesTotal !== null) {
+      cacheBytesTotal = netCacheBytes(cacheBytesTotal, 0, entry.size);
+    }
     return null;
   }
 
@@ -59,23 +67,96 @@ export async function readSentenceCache(
   };
 }
 
-/** Counts writes so a large prefetch batch only sweeps occasionally. */
-let writesSinceSweep = 0;
-const SWEEP_INTERVAL = 8;
+/**
+ * Running total of rendered PCM on disk. `null` means it has not been scanned
+ * yet; the first write performs one lightweight pass and every later write is
+ * pure arithmetic.
+ */
+let cacheBytesTotal: number | null = null;
+/** Active soft cap; zero or less means unlimited. */
+let cacheByteLimit = 0;
+
+/** Forces the next write to rescan the index (used after external clears). */
+export function resetAudioCacheAccounting(): void {
+  cacheBytesTotal = null;
+}
+
+async function knownCacheBytes(): Promise<number> {
+  if (cacheBytesTotal === null) {
+    cacheBytesTotal = totalCacheBytes(await listAudioCacheSizes());
+  }
+  return cacheBytesTotal;
+}
 
 /**
  * Enforces the soft cap oldest-first. Returns how many entries were evicted.
- * A cap of zero or less means unlimited.
+ * A cap of zero or less means unlimited. Used directly when the user changes
+ * the cap, and internally when a write pushes the total past it.
  */
 export async function enforceAudioCacheCap(capBytes: number): Promise<number> {
   if (!Number.isFinite(capBytes) || capBytes <= 0) return 0;
 
-  const entries = await listAllAudioCacheEntries();
+  cacheByteLimit = capBytes;
+  const entries = await listAudioCacheSizes();
   const evicted = selectCacheEvictions(entries, capBytes);
   for (const entry of evicted) await deleteCachedAudioFile(entry);
+  cacheBytesTotal = totalCacheBytes(entries) - totalCacheBytes(evicted);
   return evicted.length;
 }
 
+async function sweepCacheIfNeeded(): Promise<void> {
+  if (!cacheOverCap(await knownCacheBytes(), cacheByteLimit)) return;
+
+  const entries = await listAudioCacheSizes();
+  const evicted = selectCacheEvictions(entries, cacheByteLimit);
+  for (const entry of evicted) await deleteCachedAudioFile(entry);
+  // Recompute instead of subtracting: another context (the settings sheet or
+  // a book deletion) may have removed rows since the last write.
+  cacheBytesTotal = totalCacheBytes(entries) - totalCacheBytes(evicted);
+}
+
+/**
+ * Writes one encoded sentence to OPFS and IndexedDB. An existing row with the
+ * same key is replaced, so its size is subtracted from the running total.
+ */
+export async function persistSentenceCache(
+  payload: SentenceCachePayload,
+  cacheCapBytes?: number,
+): Promise<void> {
+  const existing = await getAudioCacheEntry(payload.cacheKey);
+
+  await opfs.write(
+    audioCacheSegments(payload.bookId, payload.voiceKey, payload.cacheKey),
+    payload.pcm,
+  );
+
+  await putAudioCacheEntry({
+    key: payload.cacheKey,
+    bookId: payload.bookId,
+    voiceKey: payload.voiceKey,
+    sentenceId: payload.sentenceId,
+    chapterIndex: payload.chapterIndex,
+    duration: payload.duration,
+    timings: payload.timings,
+    size: payload.size,
+    createdAt: payload.createdAt,
+    speechKey: payload.speechKey,
+  });
+
+  cacheByteLimit = cacheCapBytes ?? 0;
+  cacheBytesTotal = netCacheBytes(
+    await knownCacheBytes(),
+    payload.size,
+    existing?.size ?? 0,
+  );
+  if (cacheByteLimit > 0) await sweepCacheIfNeeded();
+}
+
+/**
+ * Encodes and writes in one step for callers that must await persistence
+ * (export). Playback uses `encodeSentenceCache` + `persistSentenceCache` from
+ * a background queue instead.
+ */
 export async function writeSentenceCache(params: {
   bookId: string;
   voiceKey: string;
@@ -87,32 +168,17 @@ export async function writeSentenceCache(params: {
   speechKey?: string;
   cacheCapBytes?: number;
 }): Promise<void> {
-  const pcm = float32ToInt16(params.audio);
-  const duration = params.audio.length / SAMPLE_RATE;
-
-  await opfs.write(
-    audioCacheSegments(params.bookId, params.voiceKey, params.cacheKey),
-    new Uint8Array(pcm.buffer as ArrayBuffer),
+  await persistSentenceCache(
+    encodeSentenceCache({
+      bookId: params.bookId,
+      voiceKey: params.voiceKey,
+      cacheKey: params.cacheKey,
+      sentenceId: params.sentenceId,
+      chapterIndex: params.chapterIndex,
+      audio: params.audio,
+      timings: params.timings,
+      speechKey: params.speechKey,
+    }),
+    params.cacheCapBytes,
   );
-
-  await putAudioCacheEntry({
-    key: params.cacheKey,
-    bookId: params.bookId,
-    voiceKey: params.voiceKey,
-    sentenceId: params.sentenceId,
-    chapterIndex: params.chapterIndex,
-    duration,
-    timings: params.timings,
-    size: pcm.byteLength,
-    createdAt: Date.now(),
-    speechKey: params.speechKey,
-  });
-
-  if (params.cacheCapBytes && params.cacheCapBytes > 0) {
-    writesSinceSweep += 1;
-    if (writesSinceSweep >= SWEEP_INTERVAL) {
-      writesSinceSweep = 0;
-      await enforceAudioCacheCap(params.cacheCapBytes).catch(() => undefined);
-    }
-  }
 }

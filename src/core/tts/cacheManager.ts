@@ -3,7 +3,7 @@ import {
   listAllAudioCacheEntries,
 } from '@/core/storage/db';
 import { clearAllAudioCacheFiles } from '@/core/storage/opfs';
-import { enforceAudioCacheCap } from './audioCache';
+import { enforceAudioCacheCap, resetAudioCacheAccounting } from './audioCache';
 
 export type AudioCacheUsage = {
   entries: number;
@@ -32,5 +32,8 @@ export async function clearRenderedAudio(): Promise<void> {
     await clearAllAudioCacheFiles();
   } finally {
     await clearAllAudioCacheIndex();
+    // The running total now understates nothing but could still hold the old
+    // figure; drop it so the next write rescans the (empty) index.
+    resetAudioCacheAccounting();
   }
 }

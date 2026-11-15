@@ -12,7 +12,15 @@ import type {
 import { SAMPLE_RATE } from '@/core/tts/constants';
 import { createJobCancelledError } from '@/core/tts/cancel';
 import { sentenceCacheKey } from '@/core/tts/cacheKey';
-import { readSentenceCache, writeSentenceCache } from '@/core/tts/audioCache';
+import {
+  persistSentenceCache,
+  readSentenceCache,
+  writeSentenceCache,
+} from '@/core/tts/audioCache';
+import {
+  encodeSentenceCache,
+  type SentenceCachePayload,
+} from '@/core/tts/cacheEncoding';
 import { respellSentence } from '@/core/tts/respell';
 import { speechProfileKey } from '@/core/tts/speechProfile';
 import { ensureModel, synthesizeSentence } from '@/core/tts/engine';
@@ -45,6 +53,43 @@ type CacheJob = JobBase & {
 
 type Job = AudioJob | CacheJob;
 
+/**
+ * Serial background writer for playback audio. OPFS + IndexedDB writes are
+ * slow on some devices, and awaiting them delayed both playback and the next
+ * inference. The queue keeps write order deterministic while inference and
+ * the audio response keep moving.
+ */
+const pendingCacheWrites: Array<{
+  payload: SentenceCachePayload;
+  cacheCapBytes?: number;
+}> = [];
+let cacheWriteRunning = false;
+
+function enqueueCacheWrite(payload: SentenceCachePayload, cacheCapBytes?: number): void {
+  pendingCacheWrites.push({ payload, cacheCapBytes });
+  void flushCacheWrites();
+}
+
+async function flushCacheWrites(): Promise<void> {
+  if (cacheWriteRunning) return;
+  cacheWriteRunning = true;
+  try {
+    while (pendingCacheWrites.length > 0) {
+      const next = pendingCacheWrites.shift();
+      if (!next) break;
+      try {
+        await persistSentenceCache(next.payload, next.cacheCapBytes);
+      } catch (error) {
+        // Persistence is best-effort: the sentence is already on its way to
+        // the main thread and will simply be synthesized again next time.
+        console.warn('[cadence] audio cache write failed', error);
+      }
+    }
+  } finally {
+    cacheWriteRunning = false;
+  }
+}
+
 const queue: Job[] = [];
 let running = false;
 /** The job currently awaiting inference, if any. */
@@ -73,19 +118,22 @@ async function runAudioJob(job: AudioJob): Promise<SynthesizedSentence> {
     voice: job.request.voice,
   });
 
-  // Persist before returning: Comlink transfers the Float32Array buffer to
-  // the main thread, detaching it here.
-  await writeSentenceCache({
-    bookId,
-    voiceKey: job.voiceKey,
-    cacheKey: job.key,
-    sentenceId: sentence.id,
-    chapterIndex: sentence.chapterIndex,
-    audio: synthesized.audio,
-    timings: synthesized.timings,
-    speechKey: job.speechKey,
-    cacheCapBytes: job.request.cacheCapBytes,
-  });
+  // Encode while the Float32 buffer still exists: Comlink transfers (and
+  // detaches) it when this job resolves. The disk write is queued instead of
+  // awaited so playback starts as soon as inference finishes.
+  enqueueCacheWrite(
+    encodeSentenceCache({
+      bookId,
+      voiceKey: job.voiceKey,
+      cacheKey: job.key,
+      sentenceId: sentence.id,
+      chapterIndex: sentence.chapterIndex,
+      audio: synthesized.audio,
+      timings: synthesized.timings,
+      speechKey: job.speechKey,
+    }),
+    job.request.cacheCapBytes,
+  );
 
   return synthesized;
 }
