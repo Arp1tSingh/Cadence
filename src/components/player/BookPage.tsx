@@ -1,5 +1,5 @@
 import { ArrowDown, BookOpenText } from 'lucide-react';
-import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useReducedMotion } from 'motion/react';
 import type { BookDocument, SentenceNode } from '@/types/domain';
 import { playerSession, usePlayerFrame } from '@/store/playerStore';
@@ -10,6 +10,41 @@ type BookPageProps = {
   chapterIndex: number;
   onSeekSentence: (sentenceId: string) => void;
 };
+
+/**
+ * Where a sentence should sit: roughly a third of the way down the viewport.
+ * Reading `scrollTop` plus the relative rect makes this correct even when the
+ * container itself has moved or the content above it re-laid out.
+ */
+function sentenceScrollTop(container: HTMLDivElement, element: HTMLElement): number {
+  const containerRect = container.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  return Math.max(
+    0,
+    container.scrollTop + elementRect.top - containerRect.top - container.clientHeight * 0.36,
+  );
+}
+
+/**
+ * Offscreen paragraphs opt into `content-visibility: auto`, so their height is
+ * only an estimate until the browser renders them. After an instant jump the
+ * real position can differ; re-measure for a few frames and nudge the scroll
+ * until it settles instead of leaving the reader a screen away from the text.
+ */
+function settleInstantScroll(container: HTMLDivElement, element: HTMLElement): void {
+  let attempts = 0;
+  const step = () => {
+    const top = sentenceScrollTop(container, element);
+    if (Math.abs(top - container.scrollTop) > 2) {
+      container.scrollTop = top;
+      if (attempts < 3) {
+        attempts += 1;
+        requestAnimationFrame(step);
+      }
+    }
+  };
+  requestAnimationFrame(step);
+}
 
 /**
  * Structured reader mode: every paragraph in the chapter stays on screen while
@@ -32,7 +67,13 @@ export const BookPage = memo(function BookPage({
   const lastWordRef = useRef(-1);
   const [autoScroll, setAutoScroll] = useState(true);
   const autoScrollRef = useRef(true);
-  autoScrollRef.current = autoScroll;
+
+  // Wheel/touch events fire in bursts; only the first one needs a state update.
+  const stopAutoScroll = () => {
+    if (!autoScrollRef.current) return;
+    autoScrollRef.current = false;
+    setAutoScroll(false);
+  };
 
   const order = useMemo(() => {
     const map = new Map<string, number>();
@@ -91,13 +132,16 @@ export const BookPage = memo(function BookPage({
     const element = sentenceRefs.current.get(sentenceId);
     if (!container || !element) return;
 
-    const containerRect = container.getBoundingClientRect();
-    const elementRect = element.getBoundingClientRect();
-    const top =
-      container.scrollTop + elementRect.top - containerRect.top - container.clientHeight * 0.36;
-    const instant = reduceMotion || !hasScrolledRef.current;
+    const top = sentenceScrollTop(container, element);
+    // A long smooth scroll through estimated paragraph heights can land far
+    // from the target, so distant jumps are instant and then corrected.
+    const instant =
+      reduceMotion ||
+      !hasScrolledRef.current ||
+      Math.abs(top - container.scrollTop) > container.clientHeight * 2;
     hasScrolledRef.current = true;
-    container.scrollTo({ top: Math.max(0, top), behavior: instant ? 'auto' : 'smooth' });
+    container.scrollTo({ top, behavior: instant ? 'auto' : 'smooth' });
+    if (instant) settleInstantScroll(container, element);
   };
 
   const activate = (sentenceId: string) => {
@@ -128,6 +172,41 @@ export const BookPage = memo(function BookPage({
     refreshStates();
     if (autoScrollRef.current) scrollToSentence(sentenceId);
   };
+
+  /**
+   * Sentence spans are memoised, so the callbacks they receive must keep a
+   * stable identity. Without this, toggling auto-scroll would re-render every
+   * span, re-attach a ref for every word in the chapter, and drop frames at
+   * the exact moment the reader starts scrolling.
+   */
+  const seekRef = useRef<(sentenceId: string) => void>(() => undefined);
+  seekRef.current = (sentenceId) => {
+    // Give immediate feedback while the seek re-buffers.
+    activate(sentenceId);
+    onSeekSentence(sentenceId);
+  };
+  const seekSentence = useCallback((sentenceId: string) => seekRef.current(sentenceId), []);
+
+  const registerSentence = useCallback(
+    (sentenceId: string, element: HTMLSpanElement | null) => {
+      if (element) sentenceRefs.current.set(sentenceId, element);
+      else sentenceRefs.current.delete(sentenceId);
+    },
+    [],
+  );
+
+  const registerWord = useCallback(
+    (sentenceId: string, wordIndex: number, element: HTMLSpanElement | null) => {
+      let spans = wordRefs.current.get(sentenceId);
+      if (!spans) {
+        if (!element) return;
+        spans = [];
+        wordRefs.current.set(sentenceId, spans);
+      }
+      spans[wordIndex] = element;
+    },
+    [],
+  );
 
   usePlayerFrame((frame) => {
     if (!order.has(frame.sentenceId)) return;
@@ -180,12 +259,9 @@ export const BookPage = memo(function BookPage({
     const container = scrollRef.current;
     const element = sentenceRefs.current.get(id);
     if (!container || !element) return;
-    const containerRect = container.getBoundingClientRect();
-    const elementRect = element.getBoundingClientRect();
-    const top =
-      container.scrollTop + elementRect.top - containerRect.top - container.clientHeight * 0.36;
-    container.scrollTo({ top: Math.max(0, top), behavior: 'auto' });
+    container.scrollTo({ top: sentenceScrollTop(container, element), behavior: 'auto' });
     hasScrolledRef.current = true;
+    settleInstantScroll(container, element);
   }, [order]);
 
   if (!chapter) {
@@ -213,8 +289,8 @@ export const BookPage = memo(function BookPage({
         ref={scrollRef}
         tabIndex={0}
         aria-label={`${chapter.title} text`}
-        onWheel={() => setAutoScroll(false)}
-        onTouchMove={() => setAutoScroll(false)}
+        onWheel={stopAutoScroll}
+        onTouchMove={stopAutoScroll}
         className="no-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 outline-none"
       >
         <article className="mx-auto w-full max-w-3xl pb-6 pt-4">
@@ -238,7 +314,7 @@ export const BookPage = memo(function BookPage({
                 <p
                   key={paragraph.id}
                   className={cn(
-                    'text-[clamp(1.06rem,1.9vw,1.3rem)] leading-[1.75] tracking-[-0.005em]',
+                    'book-paragraph text-[clamp(1.06rem,1.9vw,1.3rem)] leading-[1.75] tracking-[-0.005em]',
                     heading && 'font-semibold text-ink',
                     quote && 'border-l-2 border-brand/40 pl-4 italic text-ink-secondary',
                     (paragraph.level ?? 0) >= 2 && 'text-[clamp(1.15rem,2.4vw,1.55rem)]',
@@ -250,23 +326,9 @@ export const BookPage = memo(function BookPage({
                       key={sentence.id}
                       sentence={sentence}
                       state={stateFor(order.get(sentence.id) ?? 0)}
-                      onSeek={(sentenceId) => {
-                        // Give immediate feedback while the seek re-buffers.
-                        activate(sentenceId);
-                        onSeekSentence(sentenceId);
-                      }}
-                      registerSentence={(element) => {
-                        if (element) sentenceRefs.current.set(sentence.id, element);
-                        else sentenceRefs.current.delete(sentence.id);
-                      }}
-                      registerWord={(wordIndex, element) => {
-                        let spans = wordRefs.current.get(sentence.id);
-                        if (!spans) {
-                          spans = [];
-                          wordRefs.current.set(sentence.id, spans);
-                        }
-                        spans[wordIndex] = element;
-                      }}
+                      onSeek={seekSentence}
+                      registerSentence={registerSentence}
+                      registerWord={registerWord}
                       trailingSpace={index < paragraph.sentences.length - 1}
                     />
                   ))}
@@ -302,8 +364,8 @@ type SentenceSpanProps = {
   sentence: SentenceNode;
   state: string;
   onSeek: (sentenceId: string) => void;
-  registerSentence: (element: HTMLSpanElement | null) => void;
-  registerWord: (index: number, element: HTMLSpanElement | null) => void;
+  registerSentence: (sentenceId: string, element: HTMLSpanElement | null) => void;
+  registerWord: (sentenceId: string, index: number, element: HTMLSpanElement | null) => void;
   trailingSpace: boolean;
 };
 
@@ -320,7 +382,7 @@ const SentenceSpan = memo(function SentenceSpan({
   return (
     <>
       <span
-        ref={registerSentence}
+        ref={(element) => registerSentence(sentence.id, element)}
         data-sentence-id={sentence.id}
         data-state={state}
         onClick={() => onSeek(sentence.id)}
@@ -329,7 +391,7 @@ const SentenceSpan = memo(function SentenceSpan({
         {sentence.words.map((word, index) => (
           <span key={word.id}>
             <span
-              ref={(element) => registerWord(index, element)}
+              ref={(element) => registerWord(sentence.id, index, element)}
               className="lyric-word book-word"
               data-text={word.text}
               style={past ? ({ '--fill': '100%' } as CSSProperties) : undefined}

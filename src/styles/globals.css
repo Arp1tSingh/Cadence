@@ -257,6 +257,16 @@
     --lyric-dim: 72%;
   }
 
+  /*
+   * A chapter can be thousands of paragraphs; laying all of them out on open
+   * costs a long frame. Offscreen paragraphs skip layout and paint, and the
+   * remembered size keeps scroll positions stable once they have rendered.
+   */
+  .book-paragraph {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 120px;
+  }
+
   .book-sentence {
     border-radius: 4px;
     transition:
