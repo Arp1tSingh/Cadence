@@ -129,16 +129,30 @@
     border: 1px solid var(--color-hairline);
     background-color: var(--color-surface);
     box-shadow: var(--shadow-card);
-    -webkit-backdrop-filter: blur(40px) saturate(190%);
-    backdrop-filter: blur(40px) saturate(190%);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
   }
 
   .glass-dock {
     border: 1px solid var(--color-hairline);
     background-color: var(--color-surface);
     box-shadow: var(--shadow-dock);
-    -webkit-backdrop-filter: blur(40px) saturate(190%);
-    backdrop-filter: blur(40px) saturate(190%);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+  }
+
+  /*
+   * Backdrop filters force the browser to re-sample everything behind a
+   * surface. Users who ask for less transparency get a flat, opaque surface
+   * instead, which is both cheaper and easier to read.
+   */
+  @media (prefers-reduced-transparency: reduce) {
+    .glass,
+    .glass-dock {
+      background-color: var(--color-surface-strong);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
   }
 
   .squircle {
@@ -172,31 +186,25 @@
       linear-gradient(to bottom, transparent 50%, var(--color-canvas) 100%);
   }
 
+  /*
+   * The mesh used to be three 68vmax discs painted with a 120px backdrop
+   * blur, a blend mode, and an infinite 28s transform animation. That is a
+   * full-screen filter chain re-rasterised on every frame, so it is now a
+   * static radial gradient per disc: same soft colour wash, no filter, no
+   * blend, no animation.
+   */
   .mesh-orb {
     position: absolute;
     width: 68vmax;
     height: 68vmax;
     border-radius: 50%;
     opacity: 0.42;
-    filter: blur(120px);
-    mix-blend-mode: screen;
-    will-change: transform;
-    animation: mesh-drift 28s ease-in-out infinite alternate;
+    background: radial-gradient(closest-side, var(--orb), transparent);
   }
 
-  .mesh-orb:nth-child(2) {
-    animation-duration: 34s;
-    animation-delay: -6s;
-  }
-
-  .mesh-orb:nth-child(3) {
-    animation-duration: 40s;
-    animation-delay: -14s;
-  }
-
+  /* Light surfaces need a lighter wash without the old multiply blend. */
   [data-theme='light'] .mesh-orb {
-    opacity: 0.28;
-    mix-blend-mode: multiply;
+    opacity: 0.24;
   }
 
   .no-scrollbar {
@@ -208,9 +216,11 @@
   }
 
   /*
-   * Karaoke word fill. The base word stays dim; a clipped duplicate receives
-   * the bright fill width from the requestAnimationFrame loop, so playback
-   * never triggers React renders per word.
+   * Karaoke word fill. The base word stays dim; a full-size duplicate receives
+   * the bright fill and a `clip-path` inset written from the
+   * requestAnimationFrame loop. Clipping repaints only the word, while the old
+   * animated `width` re-laid-out the duplicate on every frame, so playback
+   * never triggers layout or React renders per word.
    */
   .lyric-word {
     --lyric-dim: 32%;
@@ -222,12 +232,12 @@
 
   .lyric-word-fill {
     position: absolute;
-    inset: 0 auto 0 0;
-    width: var(--fill, 0%);
+    inset: 0;
     overflow: hidden;
     white-space: pre;
     color: var(--color-ink);
     pointer-events: none;
+    clip-path: inset(0 calc(100% - var(--fill, 0%)) 0 0);
   }
 
   .lyric-word[data-active='true'] {
@@ -351,18 +361,6 @@
 
   .pt-safe {
     padding-top: max(env(safe-area-inset-top), 0px);
-  }
-}
-
-@keyframes mesh-drift {
-  0% {
-    transform: translate3d(-12%, -8%, 0) scale(1) rotate(0deg);
-  }
-  50% {
-    transform: translate3d(8%, 10%, 0) scale(1.12) rotate(18deg);
-  }
-  100% {
-    transform: translate3d(-4%, 16%, 0) scale(0.96) rotate(-12deg);
   }
 }
 

@@ -125,7 +125,7 @@ export function AppShell() {
 
           <div className="flex items-center gap-2">
             {storage.supported ? (
-              <span className="hidden items-center gap-1.5 rounded-pill border border-hairline bg-surface px-3 py-1.5 text-[11px] font-medium text-ink-secondary backdrop-blur-xl lg:inline-flex">
+              <span className="hidden items-center gap-1.5 rounded-pill border border-hairline bg-surface-strong px-3 py-1.5 text-[11px] font-medium text-ink-secondary lg:inline-flex">
                 <ShieldCheck size={13} className="text-success" aria-hidden="true" />
                 {formatBytes(storage.usage)} on-device
               </span>

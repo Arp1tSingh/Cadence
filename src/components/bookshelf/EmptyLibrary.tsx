@@ -31,7 +31,7 @@ export function EmptyLibrary({ onImport }: EmptyLibraryProps) {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
       >
-        <div className="inline-flex items-center gap-2 rounded-pill border border-hairline bg-surface px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-secondary backdrop-blur-xl">
+        <div className="inline-flex items-center gap-2 rounded-pill border border-hairline bg-surface-strong px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-secondary">
           <span className="relative flex size-1.5">
             <span className="absolute inline-flex size-full animate-ping rounded-full bg-brand opacity-60" />
             <span className="relative inline-flex size-1.5 rounded-full bg-brand" />

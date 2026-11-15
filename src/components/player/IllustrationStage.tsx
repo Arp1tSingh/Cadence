@@ -24,7 +24,7 @@ export function IllustrationStage({ illustration }: IllustrationStageProps) {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={reduceMotion ? undefined : { opacity: 0, y: -8, scale: 0.99 }}
           transition={{ duration: 0.38, ease: [0.22, 1, 0.36, 1] }}
-          className="mx-auto mb-2 mt-1 flex w-fit max-w-full shrink-0 items-center justify-center rounded-[20px] border border-hairline bg-surface/60 p-1 shadow-card backdrop-blur-xl sm:mb-3"
+          className="mx-auto mb-2 mt-1 flex w-fit max-w-full shrink-0 items-center justify-center rounded-[20px] border border-hairline bg-surface-strong p-1 shadow-card sm:mb-3"
         >
           <img
             src={source}

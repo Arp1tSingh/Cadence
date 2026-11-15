@@ -25,7 +25,7 @@ export function BookCard({ book, onOpen, onRemove, className }: BookCardProps) {
       >
         <div className="relative transition-transform duration-300 ease-out group-hover:-translate-y-1 group-focus-within:-translate-y-1">
           <BookCover book={book} />
-          <span className="absolute left-2.5 top-2.5 inline-flex items-center gap-1 rounded-pill bg-black/45 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-white backdrop-blur-md">
+          <span className="absolute left-2.5 top-2.5 inline-flex items-center gap-1 rounded-pill bg-black/65 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-white">
             <FileText size={10} aria-hidden="true" />
             {book.format}
           </span>
@@ -54,7 +54,7 @@ export function BookCard({ book, onOpen, onRemove, className }: BookCardProps) {
           label={`Remove ${book.metadata.title}`}
           onClick={() => onRemove(book)}
           variant="secondary"
-          className="size-8 bg-black/40 text-white backdrop-blur-md hover:bg-black/60"
+          className="size-8 bg-black/60 text-white hover:bg-black/75"
         >
           <Trash2 size={13} />
         </IconButton>

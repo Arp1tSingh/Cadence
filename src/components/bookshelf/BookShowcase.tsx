@@ -87,7 +87,7 @@ export function BookShowcase() {
       </div>
 
       {/* Live lyrics chip */}
-      <div className="glass absolute right-[4%] top-[15%] z-20 inline-flex items-center gap-1.5 rounded-pill px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-ink-secondary sm:right-[7%]">
+      <div className="absolute right-[4%] top-[15%] z-20 inline-flex items-center gap-1.5 rounded-pill border border-hairline bg-surface-strong px-3 py-1.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-ink-secondary shadow-card sm:right-[7%]">
         <span className="size-1.5 rounded-full bg-brand" />
         Live lyrics
       </div>

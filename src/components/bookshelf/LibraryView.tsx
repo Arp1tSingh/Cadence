@@ -74,7 +74,7 @@ export function LibraryView({ onImport, onListen }: LibraryViewProps) {
           onClick={onImport}
           className="group flex aspect-[2/3] w-full flex-col items-center justify-center gap-2 rounded-[14px] border border-dashed border-hairline bg-surface-muted/40 text-ink-tertiary transition-colors duration-200 hover:border-brand/40 hover:bg-brand-soft/40 hover:text-ink"
         >
-          <span className="grid size-10 place-items-center rounded-full border border-hairline bg-surface backdrop-blur-xl transition-transform duration-300 group-hover:scale-105">
+          <span className="grid size-10 place-items-center rounded-full border border-hairline bg-surface-strong transition-transform duration-300 group-hover:scale-105">
             <Plus size={17} aria-hidden="true" />
           </span>
           <span className="text-[12px] font-medium">Add EPUB or PDF</span>
