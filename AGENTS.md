@@ -78,12 +78,14 @@ src/
   app/                 App shell, routing, providers, error boundary
   components/
     bookshelf/         Book cards, dropzone, import sheet, storage UI
-    player/            Lyrics canvas, sentence rows, glass dock, mesh background, voice blender
+    player/            Lyrics canvas, sentence rows, glass dock, mesh background, voice blender,
+                       pinned illustration stage
     modals/            Export studio, lexicon, normalization rules, settings
     ui/                Shared buttons, sliders, switches, sheets, progress rings
   core/
     audio/             AudioScheduler, lookahead, word sync, WSOLA, MediaSession, wake lock
-    parsing/           EPUB/PDF parsers, normalizer, sentence chunker, cover colors
+    parsing/           EPUB/PDF parsers, illustration detection, normalizer, sentence chunker,
+                       cover colors
     storage/           OPFS manager, IndexedDB schema, model cache, audio cache index
     tts/               Kokoro engine, voices, phonemizer, synthesis queue, cache keys
     export/            MP3/M4B jobs, chapter atom patcher, export progress
@@ -119,6 +121,7 @@ OPFS
   /models/voices/<voice>.bin         # Kokoro style vectors
   /books/<bookId>.<epub|pdf>         # original import
   /covers/<bookId>.<ext>             # cover image
+  /illustrations/<bookId>/<page>.jpg # rendered full-page PDF artwork
   /cache/<bookId>/<voiceKey>/<hash>.i16
   /exports/<jobId>.<mp3|m4b>      # finalized export (moov last, chpl patched in place)
 
@@ -170,11 +173,12 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 - Export QA uses a synthetic two-chapter book with pre-seeded Int16 cache (45 tones): M4B whole-book → 865,332 B, 77.40 s, boxes `ftyp/mdat/moov`, moov at EOF, `chpl` marks at 0 s and 68.8 s, decodes to 77.42 s; MP3 chapter → 138,932 B, 8.60 s, decodes to 8.64 s; pause held the encoder, resume finished, cancel deleted the partial file, and three history rows persisted. Headless Edge has no AAC encoder; headed Edge encodes AAC at 44.1/48 kHz, not 24 kHz — hence the resample.
 - Settings QA (fresh Edge profile, synthetic 1-chapter/3-sentence book): model tier, lexicon entry, and citation/URL rules persisted across reloads. Default-profile audio read `0 of 1 fully cached` under the new speech profile; re-seeding the respelled cache with `speechKey 7d177ad4` read `1 of 1 fully cached`. Playback used the seeded respelled cache and stayed at 6 entries (no new inference). A 512 MB cap reclaimed 7 oldest-first entries and left 2; clear-all left 0; zero console/page errors.
 - Measured on the QA laptop (i5-8265U, 15 W, 4 threads): Kokoro q8 WASM runs at roughly **0.2× real time** (3.7 s of audio in ~19–25 s), and fp32 WASM is not faster. Threading scales only ~1.1×. The UI now labels this state instead of showing an indefinite spinner.
-- `npm run typecheck && npm run lint && npm run test && npm run build` passes (21 files, 152 tests, zero lint warnings).
-- PDF outline QA on *Mushoku Tensei: Jobless Reincarnation Vol. 16* (233 pages, 16 image pages, 16 outline entries): import finishes in 9 s on Vercel with 10 narrated chapters, exact outline titles through the Extra Chapter, 71,125 words, and a 170,895-byte OPFS cover extracted from page 1. The old heuristic produced title-only stubs and split body chunks; outline page ranges plus title-fragment stripping fix that. Cold live playback reached 0.5 s in 95 s with one cache entry and zero console/page errors. Inline image-only pages are skipped (no text layer); the drop-cap opener now stays at body size, so chapter 3 starts with "TWO DAYS HAD PASSED since I summoned our Guardian Beast." instead of a false heading.
+- `npm run typecheck && npm run lint && npm run test && npm run build` passes (23 files, 161 tests, zero lint warnings).
+- PDF outline QA on *Mushoku Tensei: Jobless Reincarnation Vol. 16* (233 pages, 16 image pages, 16 outline entries): import finishes in 9 s on Vercel with 10 narrated chapters, exact outline titles through the Extra Chapter, 71,125 words, and a 170,895-byte OPFS cover extracted from page 1. The old heuristic produced title-only stubs and split body chunks; outline page ranges plus title-fragment stripping fix that. Cold live playback reached 0.5 s in 95 s with one cache entry and zero console/page errors. Inline image-only pages are skipped for narration; the drop-cap opener now stays at body size, so chapter 3 starts with "TWO DAYS HAD PASSED since I summoned our Guardian Beast." instead of a false heading.
+- **PDF illustrations — complete.** After the scanned-PDF guard, PDF import treats pages after the cover with ≤200 non-whitespace characters as candidates and keeps them only when the operator list paints an image of ≥250,000 px. Candidates must fall inside the narrated outline range, so front color inserts and the back-cover logo never reach storage. Accepted pages are rendered by the parser worker (OffscreenCanvas → JPEG, 1600 px long edge, q0.84) to `/illustrations/<bookId>/<page>.jpg`; IndexedDB stores only page index, dimensions, MIME type, and byte size. `ParagraphNode`/`SentenceNode` gained `pageIndex` (plus `pageEndIndex` for paragraphs crossing a page break), and `sentencePage()` distributes sentences proportionally across a multi-page paragraph. The player shows the artwork for `sentence.pageIndex + 1` in a pinned card above the lyrics or Book Page, so it stays visible while the previous page is read; `useIllustrationImage` loads it from OPFS as a revocable object URL. Settings → Narration → Reading toggles `showIllustrations` (default on). `PARSER_VERSION` is now `1.1.0`; PDFs imported before this change need re-importing because their records carry no page provenance or artwork.
 - **Vercel deployed.** The `Arp1tSingh/Cadence` repository is linked to the `cadence` project (`prj_9oVPhcSuhl9x9wigoaLjHY2T3kEc`) through the Vercel Git integration, with `main` as the production branch. The canonical URL is `https://cadence-six-dun.vercel.app/`. Production deployments build with `npm ci` + `npm run build`, serve `dist/`, and send COOP/COEP + CORP on every route. Hashed assets are cached immutably; ORT WASM, PDF.js assets, and voices are cached for seven days. No environment variables or server functions are needed. Live headers and `crossOriginIsolated: true` were verified after deployment.
 - **GitHub Pages retired.** The Pages workflow was removed, the site was disabled through the API, the `github-pages` environment was deleted, and the repository homepage was cleared. Pages could not set COOP/COEP, so it ran with a single WASM thread; the app was fully functional there, but every feature except threaded inference is also available on Vercel with better performance. The Pages URL now returns 404.
-- Next: cross-browser QA sweep (Safari/iOS gesture and safe-area behavior, Firefox WASM fallback), a large-library storage stress pass, and a decision on whether inline PDF illustration pages should appear in the Book Page reader. Image-only pages are currently skipped for narration; the PDF cover is extracted.
+- Next: cross-browser QA sweep (Safari/iOS gesture and safe-area behavior, Firefox WASM fallback) and a large-library storage stress pass. PDF artwork detection is shape-based (text density plus painted image area), so landscape spreads and art pages with long captions can still be skipped.
 
 
 ## Phase Tracker
@@ -186,6 +190,7 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 | 2. TTS + playback | Complete | Kokoro worker, OPFS PCM cache, scheduler, player UI |
 | 3. Live Lyrics + voice/speed | Complete | Book Page, WSOLA speed, 3-voice pad, chapter cache rings |
 | 4. Export + settings + polish | Complete | MP3/M4B + chpl, settings sheet, lexicon/rules, tiers, cache caps |
+| 5. PDF illustration reveal | Complete | Artwork detection, OPFS storage, pinned player stage, settings toggle |
 
 ## Progress Log
 
@@ -279,7 +284,17 @@ Add one dated entry per milestone. Keep entries short: what changed, what passed
 - Real-book QA on *Mushoku Tensei Vol. 16* (233 pages, 16 image pages): 10 chapters with exact titles through the Extra Chapter, 71,125 words, 9 s import; cold live playback reached 0.5 s in 95 s with one cache entry and zero console/page errors. Local dev and production preview produced the same chapters, cover, and word count.
 - Dev watcher ignores `test/`, `.cache/`, and `samples/qa-novel/`; browser QA profiles now live in the OS temp directory so locked Edge cookie databases cannot crash Vite.
 - Verified: typecheck, lint (0 warnings), 21 test files / 152 tests, production build.
-- Next: cross-browser QA sweep and a decision on inline PDF illustration pages.
+
+### 2026-11-15 — PDF illustration reveal
+- Added `core/parsing/pdf-illustrations.ts`: pure detection helpers (`ILLUSTRATION_MAX_TEXT_CHARS = 200`, `ILLUSTRATION_MIN_IMAGE_AREA = 250_000`) and 3 tests.
+- `pdf.ts` now counts non-whitespace characters per page during text extraction and, after the scanned-PDF guard, inspects the operator list of low-text candidates for `paintImageXObject` / inline image dimensions. Accepted pages render through the shared `renderPageImage()` helper (cover: 900 px, q0.88; artwork: 1600 px, q0.84). Candidates are filtered to the narrated outline range, so front color inserts and the back-cover logo are never stored.
+- `pdf-layout.ts` keeps `pageEndIndex` for paragraphs that continue across a page break; `sentences.ts` adds `sentencePage()` and stamps `pageIndex` on sentences and `pageIndex`/`pageEndIndex` on paragraphs. 4 new mapping tests.
+- OPFS gained `/illustrations/<bookId>/<page>.jpg` write/read helpers; `deleteBookBlobs()` removes the book's artwork folder. Parser worker reports an `illustrations` stage while extracting and saving, and only records metadata (page, size, MIME, bytes) in IndexedDB.
+- Player: `core/player/illustrations.ts` resolves `illustrationForPage()` as `sentence.pageIndex + 1`; `IllustrationStage` renders a pinned card above the lyrics or Book Page with a Motion cross-fade; `useIllustrationImage` turns the OPFS blob into a revocable object URL. `PARSER_VERSION` → `1.1.0`.
+- Settings: `showIllustrations` (default on) persisted in IndexedDB, surfaced under Narration → Reading with explanatory copy; toggling re-renders the player immediately.
+- Real-browser QA (Edge, final production build, fresh profile) on *Mushoku Tensei Vol. 16*: import 19 s, 10 chapters, 71,125 words, 170,895-byte cover, 7 artwork pages extracted (18, 42, 109, 147, 188, 209, 231) at 891×1271 JPEG / 132–223 KB. Front inserts 4–9 and the page-233 logo are excluded. Sentence `ch01_p108_s02` on page 17 showed the page-18 artwork (`naturalWidth 891`, blob URL) in both Book Page and focus lyrics; the card measures 256×365 px on a 1360×960 viewport and 228×320 px on a 390×844 mobile viewport with no overflow. The settings toggle hid and restored it instantly; zero console/page errors.
+- Verified: typecheck, lint (0 warnings), 23 test files / 161 tests, production build.
+- Next: cross-browser QA sweep (Safari/iOS, Firefox).
 
 ## Context-Management Protocol
 
@@ -324,5 +339,6 @@ This project is large; protect context deliberately:
 - Seek, voice change, and pause call `cancelPending()`; the one in-flight inference still finishes and is cached, so a switch can lag by at most one sentence.
 - Blended voices are phonemized in the primary voice's language; the style rows mix timbre and prosody but not phoneme inventories. Mixing en-US and en-GB voices therefore uses the primary accent's phonemes.
 - Speed changes restart the current sentence only when audio is already scheduled; if synthesis is still running, the request resolves at the new rate and no inference is wasted.
-- PDF chapters prefer the document outline. Documents without at least two chapter-like outline entries fall back to font/gap heuristics, which can misread decorative openers or unusual layouts. Inline image-only illustration pages are skipped (no narration text); only the PDF cover is stored and displayed.
+- PDF chapters prefer the document outline. Documents without at least two chapter-like outline entries fall back to font/gap heuristics, which can misread decorative openers or unusual layouts. Inline image-only illustration pages are skipped for narration; artwork is extracted separately when a low-text page paints a large image inside the narrated outline range.
+- PDF illustrations are only extracted during import, so books imported before `PARSER_VERSION 1.1.0` have no page provenance or artwork until re-imported. Art detection is heuristic: pages with more than 200 non-whitespace characters or without a ≥250,000 px image are treated as text, so dense captions or vector-only spreads can miss. The card also shrinks the lyric area while visible; users can turn it off in Settings → Narration → Reading.
 - Large books stress IndexedDB/OPFS; avoid loading entire audio or all sentences into memory at once.

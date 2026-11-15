@@ -11,7 +11,7 @@ Cadence turns `.epub` and `.pdf` books into studio-quality audiobooks directly i
 The core implementation is complete across five milestones:
 
 1. ✅ Scaffold and Apple-inspired design system
-2. ✅ EPUB/PDF ingestion, normalization, and bookshelf
+2. ✅ EPUB/PDF ingestion, full-page PDF artwork extraction, normalization, and bookshelf
 3. ✅ Local Kokoro TTS, OPFS caching, and gapless playback
 4. ✅ Word-synced Live Lyrics, Book Page mode, voice blending, and speed control
 5. ✅ MP3/M4B export, pronunciation lexicon, normalization rules, model tiers, and cache management
@@ -30,7 +30,7 @@ npx vercel --prod
 
 No environment variables are required. [`vercel.json`](./vercel.json) pins the install (`npm ci`), build (`npm run build`), and output (`dist`) settings, and sends COOP/COEP headers so the deployed app is cross-origin isolated and can use multi-threaded WASM. Hosts that cannot set those headers still work with a single WASM thread, just slower. A Netlify config is included for parity.
 
-PDF imports use the document outline for chapter titles and boundaries when it has at least two chapter-like entries, and the cover is rendered on an OffscreenCanvas inside the parser worker. Image-only illustration pages have no text layer, so they are not narrated.
+PDF imports use the document outline for chapter titles and boundaries when it has at least two chapter-like entries, and the cover is rendered on an OffscreenCanvas inside the parser worker. Full-page illustrations are detected during import (low-text pages inside the narrated outline range that paint a large image), rendered to JPEG, and stored in local browser storage. When the next page is artwork, the player pins it above the lyrics or Book Page while the previous page is narrated; this can be turned off in Settings → Narration → Reading. Image-only pages have no text layer, so they are not narrated, and PDFs imported before this feature need to be added again to gain page provenance and artwork.
 
 For a deployment served from a subpath, set `VITE_BASE` at build time (for example `VITE_BASE=/cadence/`).
 
