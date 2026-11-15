@@ -46,9 +46,6 @@ export const usePlayerStore = create<PlayerState>()(
 
     openBook: async (book) => {
       const settings = useSettingsStore.getState();
-      set((state) => {
-        state.bookId = book.id;
-      });
       await playerSession.open(book, {
         voice: settings.voice,
         tier: settings.modelTier,
@@ -58,6 +55,7 @@ export const usePlayerStore = create<PlayerState>()(
         cacheCapBytes: settings.cacheCapBytes,
       });
       set((state) => {
+        state.bookId = book.id;
         state.snapshot = playerSession.getSnapshot();
       });
     },

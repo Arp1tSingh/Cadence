@@ -20,6 +20,7 @@ import {
 } from './constants';
 import { alignWords, offsetTimings } from './timing';
 import { concatPcm } from './pcm';
+import { devLog, realTimeFactor } from '@/lib/devLog';
 import {
   getVoice,
   normalizeVoiceSelection,
@@ -50,6 +51,7 @@ function assetUrl(path: string): string {
 }
 
 let configured = false;
+let wasmThreads = 1;
 
 function configureEnvironment(): void {
   if (configured) return;
@@ -70,6 +72,7 @@ function configureEnvironment(): void {
       typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated
         ? Math.max(1, Math.min(4, navigator.hardwareConcurrency || 2))
         : 1;
+    wasmThreads = wasm.numThreads;
   }
 }
 
@@ -279,6 +282,16 @@ async function loadEngine(
     dtype: plan.dtype,
   });
 
+  devLog('model loaded', {
+    crossOriginIsolated: typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated,
+    device: plan.device,
+    dtype: plan.dtype,
+    threads: wasmThreads,
+    hardwareConcurrency: navigator.hardwareConcurrency,
+    tier,
+    cacheHit,
+  });
+
   return { tts, device: plan.device, dtype: plan.dtype, tier, cacheHit };
 }
 
@@ -422,6 +435,7 @@ export async function synthesizeSentence(request: {
   sentence: SentenceNode;
   voice: VoiceSelection;
 }): Promise<SynthesizedSentence> {
+  const startedAt = performance.now();
   const tts = requireEngine();
   const sentence = request.sentence;
   const voice = normalizeVoiceSelection(request.voice);
@@ -441,10 +455,20 @@ export async function synthesizeSentence(request: {
   }
 
   const merged = mergePieces(pieces);
+  const duration = merged.audio.length / SAMPLE_RATE;
+  const wallMs = performance.now() - startedAt;
+
+  devLog('synthesis', {
+    sentenceId: sentence.id,
+    audioSeconds: Number(duration.toFixed(2)),
+    wallMs: Math.round(wallMs),
+    realTimeFactor: Number(realTimeFactor(duration, wallMs).toFixed(2)),
+  });
+
   return {
     sentenceId: sentence.id,
     sampleRate: SAMPLE_RATE,
-    duration: merged.audio.length / SAMPLE_RATE,
+    duration,
     audio: merged.audio,
     timings: merged.timings,
     fromCache: false,

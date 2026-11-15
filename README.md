@@ -55,6 +55,8 @@ npm run dev
 
 The app requires cross-origin isolation for threaded WASM. The dev and preview servers set the necessary headers. Without them the app still runs with a single WASM thread. See [AGENTS.md](./AGENTS.md) for deployment notes.
 
+In development, the browser console logs the narration backend, dtype, WASM thread count, cross-origin isolation status, and the real-time factor of every synthesized sentence. These diagnostics are compiled out of production builds.
+
 ## Privacy
 
 - No accounts, analytics, or telemetry.
