@@ -355,3 +355,16 @@ This project is large; protect context deliberately:
 - PDF chapters prefer the document outline. Documents without at least two chapter-like outline entries fall back to font/gap heuristics, which can misread decorative openers or unusual layouts. Inline image-only illustration pages are skipped for narration; artwork is extracted separately when a low-text page paints a large image inside the narrated outline range.
 - PDF illustrations are only extracted during import, so books imported before `PARSER_VERSION 1.1.0` have no page provenance or artwork until re-imported. Art detection is heuristic: pages with more than 200 non-whitespace characters or without a ≥250,000 px image are treated as text, so dense captions or vector-only spreads can miss. The card also shrinks the lyric area while visible; users can turn it off in Settings → Narration → Reading.
 - Large books stress IndexedDB/OPFS; avoid loading entire audio or all sentences into memory at once.
+
+## Known Performance Debt
+
+Verified during the performance pass; each item is a known cost that was not removed because the fix was larger than the phase allowed.
+
+- **Synthesis speed is unchanged.** Kokoro `q8` WASM still runs at roughly 0.2× real time on a 15 W CPU. The preroll only hides the gaps; it does not make inference faster. WebGPU on a real adapter is the only large lever left.
+- **Book Page still mounts every word span.** `content-visibility` skips layout and paint for offscreen paragraphs, but a long chapter still creates thousands of DOM nodes and ref callbacks at open. Virtualising paragraphs would remove that cost and is the next large win.
+- **`readChapterCacheStats` reads full cache rows.** It uses the `byBook` index and therefore deserialises every sentence's word timings just to count sentences per chapter. It now runs on open, on chapter change, and every 15 s instead of every 5 s; a size/count-only projection would make it nearly free.
+- **Cache accounting self-heals rather than synchronises.** The TTS worker keeps its own running byte total. Clearing rendered audio or deleting a book from the main thread does not push the new total into the worker; the next over-cap sweep rescans and corrects it.
+- **Full-screen overlays keep their blur.** `ModelSetup`, `PlayerError`, the window dropzone, and the sheet scrim still use a backdrop filter. They are transient and only one is visible at a time, so they were left alone; the permanent glass surfaces and static badges are now translucent-free or 14 px.
+- **Immer auto-freeze is disabled globally** (`src/lib/immerSetup.ts`). This is safe only while every mutation happens inside a store producer; never mutate store state or `BookDocument` objects in place from components or workers.
+- **The parsed book stays resident.** `BookDocument` for the open book, including every word token, lives in memory and in the Zustand store. Very large PDFs are the first thing to push this.
+

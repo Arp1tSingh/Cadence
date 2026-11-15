@@ -42,7 +42,7 @@ export function ChapterDrawer({
     () => speechProfileKey({ lexicon, rules }),
     [lexicon, rules],
   );
-  const status = usePlayerStore((state) => state.snapshot.status);
+  const chapterIndex = usePlayerStore((state) => state.snapshot.chapterIndex);
   const [stats, setStats] = useState<Map<number, ChapterCacheStat>>(() => new Map());
 
   useEffect(() => {
@@ -55,13 +55,17 @@ export function ChapterDrawer({
       });
     };
 
+    // Refresh on open, when the book moves into another chapter (the chapter
+    // that just finished has new cache data), and as a slow fallback while
+    // prefetch keeps filling. The old 5s poll re-read every cache row, word
+    // timings included, twelve times a minute for very little new data.
     refresh();
-    const timer = window.setInterval(refresh, 5000);
+    const timer = window.setInterval(refresh, 15000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [book, open, speechKey, voice]);
+  }, [book, chapterIndex, open, speechKey, voice]);
 
   const completeChapters = useMemo(() => {
     let count = 0;

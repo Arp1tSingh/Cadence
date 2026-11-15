@@ -45,14 +45,17 @@ export const opfsModelCache = {
     if (!url) return undefined;
 
     const extension = extensionFor(url);
-    const bytes = await opfs.read(modelSegments('cache', await entryName(url)));
-    if (!bytes) return undefined;
+    const file = await opfs.file(modelSegments('cache', await entryName(url)));
+    if (!file || file.size === 0) return undefined;
 
-    return new Response(bytes.slice(), {
+    // Returning the OPFS `File` as the response body lets Transformers.js
+    // stream the weights instead of materialising a second full copy of a
+    // 90–330 MB model in memory.
+    return new Response(file, {
       status: 200,
       headers: {
         'Content-Type': contentTypeFor(extension),
-        'Content-Length': String(bytes.byteLength),
+        'Content-Length': String(file.size),
       },
     });
   },
