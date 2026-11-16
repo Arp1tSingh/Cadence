@@ -751,6 +751,12 @@ export class PlayerSession {
   private emit(): void {
     const entry = this.flat[this.currentIndex];
     const sentence = entry?.sentence ?? null;
+    // Status changes (buffering, pause) also emit while a sentence is partly
+    // played, so report the real offset instead of snapping back to the
+    // sentence start in the scrubber.
+    const located = this.scheduler.locate();
+    const elapsed =
+      located && located.entry.index === this.currentIndex ? located.elapsed : 0;
     this.snapshot = {
       bookId: this.book?.id ?? null,
       status: this.status,
@@ -761,7 +767,7 @@ export class PlayerSession {
       sentence,
       modelProgress: this.modelProgress,
       error: this.error,
-      positionSeconds: (this.prefixDurations[this.currentIndex] ?? 0) / this.rate,
+      positionSeconds: ((this.prefixDurations[this.currentIndex] ?? 0) + elapsed) / this.rate,
       durationSeconds: this.playbackDuration(),
     };
     for (const listener of this.listeners) listener();
