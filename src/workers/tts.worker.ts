@@ -63,30 +63,39 @@ const pendingCacheWrites: Array<{
   payload: SentenceCachePayload;
   cacheCapBytes?: number;
 }> = [];
-let cacheWriteRunning = false;
+let cacheWriteLoop: Promise<void> | null = null;
 
 function enqueueCacheWrite(payload: SentenceCachePayload, cacheCapBytes?: number): void {
   pendingCacheWrites.push({ payload, cacheCapBytes });
   void flushCacheWrites();
 }
 
-async function flushCacheWrites(): Promise<void> {
-  if (cacheWriteRunning) return;
-  cacheWriteRunning = true;
-  try {
-    while (pendingCacheWrites.length > 0) {
-      const next = pendingCacheWrites.shift();
-      if (!next) break;
-      try {
-        await persistSentenceCache(next.payload, next.cacheCapBytes);
-      } catch (error) {
-        // Persistence is best-effort: the sentence is already on its way to
-        // the main thread and will simply be synthesized again next time.
-        console.warn('[cadence] audio cache write failed', error);
-      }
+/**
+ * Drains queued playback writes. The returned promise is shared so the job
+ * loop can await the same write instead of starting more inference on top of
+ * it: a long ONNX run blocks this worker's event loop, and an un-awaited
+ * IndexedDB write can stay pending for the whole lookahead queue.
+ */
+function flushCacheWrites(): Promise<void> {
+  if (!cacheWriteLoop) {
+    cacheWriteLoop = drainCacheWrites().finally(() => {
+      cacheWriteLoop = null;
+    });
+  }
+  return cacheWriteLoop;
+}
+
+async function drainCacheWrites(): Promise<void> {
+  while (pendingCacheWrites.length > 0) {
+    const next = pendingCacheWrites.shift();
+    if (!next) break;
+    try {
+      await persistSentenceCache(next.payload, next.cacheCapBytes);
+    } catch (error) {
+      // Persistence is best-effort: the sentence is already on its way to
+      // the main thread and will simply be synthesized again next time.
+      console.warn('[cadence] audio cache write failed', error);
     }
-  } finally {
-    cacheWriteRunning = false;
   }
 }
 
@@ -200,6 +209,11 @@ async function pump(): Promise<void> {
         job.reject(createJobCancelledError());
         continue;
       }
+
+      // Finish the previous sentence's disk write before this job blocks the
+      // event loop with inference. Otherwise writes pile up and the cache only
+      // fills once playback pauses.
+      await flushCacheWrites();
 
       // Everything ahead of this job was drained, so it is now the newest
       // request. Let `cancelPending` know it is the only work in flight.
