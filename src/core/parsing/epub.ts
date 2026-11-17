@@ -74,10 +74,22 @@ const CONTAINER_TAGS = new Set([
   'dt',
 ]);
 
+type AnyNode = {
+  nodeType?: number;
+  textContent?: string | null;
+  childNodes?: ArrayLike<AnyNode>;
+  tagName?: string;
+  id?: string;
+  className?: string;
+};
+
 type AnyElement = {
   tagName?: string;
   textContent?: string | null;
   children?: ArrayLike<AnyElement>;
+  childNodes?: ArrayLike<AnyNode>;
+  id?: string;
+  className?: string;
   getAttribute?: (name: string) => string | null;
   querySelectorAll?: (selector: string) => ArrayLike<AnyElement>;
 };
@@ -183,6 +195,41 @@ function blockKindFor(tag: string, context: ParagraphKind): ParagraphKind {
   return 'paragraph';
 }
 
+/**
+ * Illustration wrappers that Gutenberg (and others) nest inside headings:
+ * `<h2><span class="caption">“Conjecturing as to the date.”</span><br/>
+ * CHAPTER XLIII.</h2>`. The caption is artwork, not chapter text, so it must
+ * not become part of the title or the spoken heading.
+ */
+const HEADING_SKIP_CLASS =
+  /(^|\s)(caption|figcaption|figure|image|illustration|cover|art)(\s|$)/i;
+const HEADING_SKIP_ID = /^(img[_-]|image[_-]|fig[_-]|illustration[_-]|cover)/i;
+
+function headingText(element: AnyElement): string {
+  let text = '';
+  const visit = (node: AnyNode): void => {
+    if (node.nodeType === 3) {
+      text += node.textContent ?? '';
+      return;
+    }
+    const tag = (node.tagName ?? '').toLowerCase();
+    if (tag === 'img' || tag === 'figure' || tag === 'figcaption' || tag === 'svg') return;
+    if (HEADING_SKIP_CLASS.test(node.className ?? '')) return;
+    if (HEADING_SKIP_ID.test(node.id ?? '')) return;
+    const children = node.childNodes;
+    if (!children) return;
+    for (let index = 0; index < children.length; index += 1) visit(children[index]);
+  };
+
+  const children = element.childNodes;
+  if (children) {
+    for (let index = 0; index < children.length; index += 1) visit(children[index]);
+  } else {
+    text = element.textContent ?? '';
+  }
+  return normalizeBlockText(text);
+}
+
 function extractBlocks(document: AnyDocument): RawBlock[] {
   const blocks: RawBlock[] = [];
   const body = document.body;
@@ -201,7 +248,7 @@ function extractBlocks(document: AnyDocument): RawBlock[] {
       if (!tag || SKIP_TAGS.has(tag)) continue;
 
       if (/^h[1-6]$/.test(tag)) {
-        pushText(child.textContent ?? '', 'heading', Number(tag[1]));
+        pushText(headingText(child), 'heading', Number(tag[1]));
         continue;
       }
 
@@ -275,7 +322,34 @@ function extractBlocks(document: AnyDocument): RawBlock[] {
 type ChapterSection = {
   title: string;
   blocks: RawBlock[];
+  /** Heading-less opening chunk that continues the previous chapter. */
+  continued?: boolean;
+  href?: string;
 };
+
+/** Case/punctuation-insensitive form used to spot repeated titles. */
+function comparableText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/**
+ * Drops a body block that only repeats the chapter heading. Some EPUBs print
+ * the title both as a heading and as the first paragraph.
+ */
+function withoutRepeatedTitle(blocks: RawBlock[]): RawBlock[] {
+  const headingIndex = blocks.findIndex((block) => block.kind === 'heading');
+  if (headingIndex === -1) return blocks;
+  const heading = comparableText(blocks[headingIndex].text);
+  if (!heading) return blocks;
+  const next = blocks[headingIndex + 1];
+  if (next && next.kind !== 'heading' && comparableText(next.text) === heading) {
+    return blocks.filter((_, index) => index !== headingIndex + 1);
+  }
+  return blocks;
+}
 
 function chooseSplitLevel(blocks: RawBlock[]): number | null {
   const counts = new Map<number, number>();
@@ -305,7 +379,13 @@ function splitSpineItem(blocks: RawBlock[], tocTitle: string, href: string): Cha
 
   if (headingIndices.length < 2) {
     const firstHeading = blocks.find((block) => block.kind === 'heading');
-    return [{ title: firstHeading?.text || tocTitle || '', blocks }];
+    return [
+      {
+        title: firstHeading?.text || tocTitle || '',
+        blocks: withoutRepeatedTitle(blocks),
+        href,
+      },
+    ];
   }
 
   const sections: ChapterSection[] = [];
@@ -313,8 +393,13 @@ function splitSpineItem(blocks: RawBlock[], tocTitle: string, href: string): Cha
   if (leading.some((block) => block.text.length > 80)) {
     const leadingHeading = leading.find((block) => block.kind === 'heading');
     sections.push({
-      title: leadingHeading?.text || tocTitle || 'Opening',
+      // A heading-less leading chunk is the tail of the previous spine file's
+      // chapter. Labelling it with the next chapter's tocTitle would create a
+      // duplicate chapter, so it is merged into the previous chapter instead.
+      title: leadingHeading?.text || '',
       blocks: leading,
+      continued: !leadingHeading,
+      href,
     });
   }
 
@@ -324,11 +409,12 @@ function splitSpineItem(blocks: RawBlock[], tocTitle: string, href: string): Cha
     const heading = sectionBlocks.find((block) => block.kind === 'heading');
     sections.push({
       title: heading?.text || tocTitle || `Chapter ${index + 1}`,
-      blocks: sectionBlocks,
+      blocks: withoutRepeatedTitle(sectionBlocks),
+      href,
     });
   });
 
-  return sections.length > 0 ? sections : [{ title: tocTitle || href, blocks }];
+  return sections.length > 0 ? sections : [{ title: tocTitle || href, blocks, href }];
 }
 
 function parseNav(html: string, navPath: string): Map<string, string> {
@@ -530,7 +616,7 @@ export async function parseEpub(
       return mediaType === 'application/xhtml+xml' || mediaType === 'text/html';
     });
 
-  const chapters: ChapterNode[] = [];
+  const collected: ChapterSection[] = [];
   const total = spine.length;
 
   for (const item of spine) {
@@ -543,7 +629,7 @@ export async function parseEpub(
     const { document } = parseHTML(normalizeHtml(html)) as unknown as { document: AnyDocument };
     const blocks = extractBlocks(document);
     if (blocks.length === 0) {
-      onChapterProgress?.(chapters.length + 1, total);
+      onChapterProgress?.(collected.length + 1, total);
       continue;
     }
 
@@ -551,16 +637,28 @@ export async function parseEpub(
     const sections = splitSpineItem(blocks, tocTitle, path);
 
     for (const section of sections) {
-      const chapter = buildChapter({
-        index: chapters.length,
-        title: section.title,
-        href: path,
-        blocks: section.blocks,
-      });
-      if (chapter) chapters.push(chapter);
+      const previous = collected[collected.length - 1];
+      if (previous && section.continued) {
+        // The chunk carries the tail of the previous chapter, which continues
+        // in this spine file. Keep one chapter instead of a mis-titled clone.
+        previous.blocks.push(...section.blocks);
+        continue;
+      }
+      collected.push(section);
     }
 
-    onChapterProgress?.(chapters.length, total);
+    onChapterProgress?.(collected.length, total);
+  }
+
+  const chapters: ChapterNode[] = [];
+  for (const section of collected) {
+    const chapter = buildChapter({
+      index: chapters.length,
+      title: section.title || 'Opening',
+      href: section.href ?? '',
+      blocks: section.blocks,
+    });
+    if (chapter) chapters.push(chapter);
   }
 
   if (chapters.length === 0) {

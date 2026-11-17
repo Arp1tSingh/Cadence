@@ -1,4 +1,4 @@
-export const PARSER_VERSION = '1.1.0';
+export const PARSER_VERSION = '1.2.0';
 
 /** Average adult narration pace used for duration estimates before synthesis. */
 export const WORDS_PER_MINUTE = 155;

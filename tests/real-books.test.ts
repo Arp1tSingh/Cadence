@@ -84,6 +84,18 @@ describe.runIf(existsSync(epubPath))('real Gutenberg EPUB', () => {
     expect(result.metadata.author?.toLowerCase()).toContain('austen');
     expect(result.chapters.length).toBeGreaterThan(10);
     expect(result.cover).toBeDefined();
+
+    // Gutenberg nests illustration captions inside <h2>; they must not leak
+    // into titles, and a chapter continued across a spine file must not become
+    // a second identically-titled chapter.
+    const titles = result.chapters.map((chapter) => chapter.title);
+    console.log('[QA] first chapter titles:', titles.slice(0, 8));
+    expect(titles.some((title) => /caption/i.test(title))).toBe(false);
+    const consecutiveDuplicates = titles.filter((title, index) => index > 0 && title === titles[index - 1]);
+    expect(consecutiveDuplicates).toEqual([]);
+    expect(titles.filter((title) => title === 'CHAPTER II.')).toHaveLength(1);
+    expect(titles).toContain('CHAPTER XLIII.');
+
     validateBook(result.chapters, 'Pride and Prejudice');
   }, 120_000);
 });
