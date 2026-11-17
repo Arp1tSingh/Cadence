@@ -67,7 +67,9 @@ let cacheWriteLoop: Promise<void> | null = null;
 
 function enqueueCacheWrite(payload: SentenceCachePayload, cacheCapBytes?: number): void {
   pendingCacheWrites.push({ payload, cacheCapBytes });
-  void flushCacheWrites();
+  // Persistence is best-effort; never let a rejected write surface as an
+  // unhandled rejection inside the worker.
+  void flushCacheWrites().catch(() => undefined);
 }
 
 /**
@@ -242,7 +244,9 @@ function enqueue(job: Job): void {
   } else {
     queue.push(job);
   }
-  void pump();
+  void pump().catch((error: unknown) => {
+    console.warn('[cadence] synthesis queue stopped', error);
+  });
 }
 
 function priorityOf(request: SynthesisRequest): Priority {

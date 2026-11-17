@@ -115,6 +115,10 @@ export type ReadingProgress = {
   chapterIndex: number;
   sentenceId: string;
   sentenceIndex: number;
+  /**
+   * Seconds into the sentence on the 1× narration timeline. Playback divides
+   * by the current rate, so the same record is correct at any speed.
+   */
   offsetSeconds: number;
   updatedAt: number;
 };

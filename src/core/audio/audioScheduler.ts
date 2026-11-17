@@ -1,5 +1,6 @@
 import { SENTENCE_GAP_SECONDS } from '@/core/tts/constants';
 import type { WordTiming } from '@/types/domain';
+import { clampResumeOffset, spanElapsed } from './timeline';
 
 export type AudioSchedulerOptions = {
   /** How much audio to schedule before the clock starts. */
@@ -15,6 +16,8 @@ export type ScheduledSentence = {
   startAt: number;
   endAt: number;
   duration: number;
+  /** Seconds skipped at the head of the buffer after a mid-sentence seek. */
+  startOffset: number;
   timings: WordTiming[];
   source: AudioBufferSourceNode | null;
 };
@@ -96,6 +99,8 @@ export class AudioScheduler {
     audio: Float32Array;
     sampleRate: number;
     timings: WordTiming[];
+    /** Start this many playback seconds into the buffer (mid-sentence seek). */
+    startOffsetSeconds?: number;
     /** Skip the inter-sentence breath after a seek. */
     gapSeconds?: number;
   }): ScheduledSentence | null {
@@ -107,6 +112,7 @@ export class AudioScheduler {
     }
 
     const duration = params.audio.length / params.sampleRate;
+    const startOffset = clampResumeOffset(params.startOffsetSeconds ?? 0, duration);
     const tail = this.tail();
     const gap = this.entries.length === 0 ? 0 : (params.gapSeconds ?? SENTENCE_GAP_SECONDS);
     const lead = Math.max(MIN_LEAD_SECONDS, this.startDelaySeconds);
@@ -125,8 +131,9 @@ export class AudioScheduler {
       chapterIndex: params.chapterIndex,
       index: params.index,
       startAt,
-      endAt: startAt + duration,
+      endAt: startAt + (duration - startOffset),
       duration,
+      startOffset,
       timings: params.timings,
       source,
     };
@@ -136,7 +143,7 @@ export class AudioScheduler {
       this.prune();
     };
 
-    source.start(startAt);
+    source.start(startAt, startOffset);
     this.entries.push(entry);
     this.entries.sort((a, b) => a.startAt - b.startAt);
     return entry;
@@ -166,8 +173,8 @@ export class AudioScheduler {
   locate(time = this.currentTime): SentenceTimelinePosition | null {
     for (let index = this.entries.length - 1; index >= 0; index -= 1) {
       const entry = this.entries[index];
-      if (time < entry.startAt) continue;
-      const elapsed = Math.min(entry.duration, Math.max(0, time - entry.startAt));
+      const elapsed = spanElapsed(entry, time);
+      if (elapsed === null) continue;
       return { entry, elapsed };
     }
     return null;

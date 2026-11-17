@@ -81,9 +81,13 @@ export function resetAudioCacheAccounting(): void {
   cacheBytesTotal = null;
 }
 
-async function knownCacheBytes(): Promise<number> {
+async function knownCacheBytes(): Promise<number | null> {
   if (cacheBytesTotal === null) {
-    cacheBytesTotal = totalCacheBytes(await listAudioCacheSizes());
+    const entries = await listAudioCacheSizes();
+    // A failed scan must not be mistaken for an empty cache: returning null
+    // makes callers skip eviction and retry the scan on the next write.
+    if (!entries) return null;
+    cacheBytesTotal = totalCacheBytes(entries);
   }
   return cacheBytesTotal;
 }
@@ -98,6 +102,7 @@ export async function enforceAudioCacheCap(capBytes: number): Promise<number> {
 
   cacheByteLimit = capBytes;
   const entries = await listAudioCacheSizes();
+  if (!entries) return 0;
   const evicted = selectCacheEvictions(entries, capBytes);
   for (const entry of evicted) await deleteCachedAudioFile(entry);
   cacheBytesTotal = totalCacheBytes(entries) - totalCacheBytes(evicted);
@@ -105,9 +110,11 @@ export async function enforceAudioCacheCap(capBytes: number): Promise<number> {
 }
 
 async function sweepCacheIfNeeded(): Promise<void> {
-  if (!cacheOverCap(await knownCacheBytes(), cacheByteLimit)) return;
+  const known = await knownCacheBytes();
+  if (known === null || !cacheOverCap(known, cacheByteLimit)) return;
 
   const entries = await listAudioCacheSizes();
+  if (!entries) return;
   const evicted = selectCacheEvictions(entries, cacheByteLimit);
   for (const entry of evicted) await deleteCachedAudioFile(entry);
   // Recompute instead of subtracting: another context (the settings sheet or
@@ -144,11 +151,14 @@ export async function persistSentenceCache(
   });
 
   cacheByteLimit = cacheCapBytes ?? 0;
-  cacheBytesTotal = netCacheBytes(
-    await knownCacheBytes(),
-    payload.size,
-    existing?.size ?? 0,
-  );
+  const known = await knownCacheBytes();
+  if (known === null) {
+    // Leave the total unknown so the next write rescans instead of trusting a
+    // total that predates this row.
+    cacheBytesTotal = null;
+    return;
+  }
+  cacheBytesTotal = netCacheBytes(known, payload.size, existing?.size ?? 0);
   if (cacheByteLimit > 0) await sweepCacheIfNeeded();
 }
 

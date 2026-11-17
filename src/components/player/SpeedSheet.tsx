@@ -151,8 +151,9 @@ export function SpeedSheet({ open, onClose, durationSeconds }: SpeedSheetProps) 
       </div>
 
       <p className="mt-4 text-[11px] leading-relaxed text-ink-tertiary">
-        Changing speed restarts the current sentence from its beginning. Cached narration is
-        reused, so the switch is instant once a sentence has been synthesized.
+        Changing speed resumes the current sentence from where it left off. Audio that was already
+        synthesized is reused; a sentence still being synthesized finishes at the previous speed
+        before it can be re-timed.
       </p>
     </Sheet>
   );

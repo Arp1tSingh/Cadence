@@ -129,6 +129,7 @@ export function PlayerDock({
 
   const [slowBuffer, setSlowBuffer] = useState(false);
   const [firstBuffer, setFirstBuffer] = useState(false);
+  const [waitSeconds, setWaitSeconds] = useState(0);
 
   useEffect(() => {
     if (snapshot.status !== 'buffering') {
@@ -140,15 +141,32 @@ export function PlayerDock({
     return () => window.clearTimeout(timer);
   }, [snapshot.status, snapshot.sentenceIndex, snapshot.positionSeconds]);
 
+  // A cold sentence can take a minute on a WASM-only device. Counting the wait
+  // keeps the dock from looking frozen while inference runs.
+  useEffect(() => {
+    if (snapshot.status !== 'buffering') {
+      setWaitSeconds(0);
+      return;
+    }
+    const startedAt = Date.now();
+    setWaitSeconds(0);
+    const timer = window.setInterval(() => {
+      setWaitSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [snapshot.status]);
+
+  const bufferLabel = slowBuffer
+    ? 'Synthesizing on this device — slower than real time…'
+    : firstBuffer
+      ? 'Synthesizing the first sentence…'
+      : 'Buffering the next sentence…';
+
   const statusLine =
     snapshot.status === 'preparing'
       ? 'Preparing the narration engine…'
       : snapshot.status === 'buffering'
-        ? slowBuffer
-          ? 'Synthesizing on this device — slower than real time…'
-          : firstBuffer
-            ? 'Synthesizing the first sentence…'
-            : 'Buffering the next sentence…'
+        ? `${bufferLabel}${waitSeconds >= 3 ? ` · ${waitSeconds} s` : ''}`
         : snapshot.status === 'ended'
           ? 'Finished'
           : snapshot.status === 'error'

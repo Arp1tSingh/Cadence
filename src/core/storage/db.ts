@@ -161,7 +161,7 @@ export type AudioCacheSizeEntry = Pick<
  * Streams the cache index and keeps only size/identity fields, so a scan does
  * not hold every entry's word timings in memory at once.
  */
-export async function listAudioCacheSizes(): Promise<AudioCacheSizeEntry[]> {
+async function scanAudioCacheSizes(): Promise<AudioCacheSizeEntry[]> {
   const db = await getDb();
   const entries: AudioCacheSizeEntry[] = [];
   const transaction = db.transaction('audioCache');
@@ -178,6 +178,32 @@ export async function listAudioCacheSizes(): Promise<AudioCacheSizeEntry[]> {
     cursor = await cursor.continue();
   }
   return entries;
+}
+
+/**
+ * Cache accounting scan that tolerates IndexedDB transaction aborts. A worker
+ * blocked by a multi-second ONNX run can miss IndexedDB's inactivity window,
+ * which surfaces as `TimeoutError: Transaction timed out due to inactivity`.
+ * The scan is retried on a fresh transaction and returns `null` when every
+ * attempt fails, so callers skip the sweep instead of discarding the total.
+ */
+export async function listAudioCacheSizes(attempts = 3): Promise<AudioCacheSizeEntry[] | null> {
+  for (let attempt = 0; attempt < Math.max(1, attempts); attempt += 1) {
+    try {
+      return await scanAudioCacheSizes();
+    } catch (error) {
+      const isLast = attempt >= attempts - 1;
+      if (isLast) {
+        console.warn('[cadence] audio cache scan failed', error);
+        return null;
+      }
+      // Yield a macrotask so a long inference can finish before retrying.
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 50 * (attempt + 1));
+      });
+    }
+  }
+  return null;
 }
 
 export async function getAudioCacheEntry(key: string): Promise<AudioCacheEntry | undefined> {

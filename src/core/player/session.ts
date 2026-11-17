@@ -19,6 +19,7 @@ import {
 } from '@/core/workers/ttsClient';
 import { AudioScheduler } from '@/core/audio/audioScheduler';
 import { clampPlaybackRate } from '@/core/audio/rate';
+import { clampResumeOffset, sentenceAtContentTime } from '@/core/audio/timeline';
 import { scaleTimings } from '@/core/audio/wsola';
 import { stretchAudio } from '@/core/workers/stretchClient';
 import {
@@ -123,6 +124,11 @@ export class PlayerSession {
   private currentIndex = 0;
   private nextScheduleIndex = 0;
   private requestCursor = 0;
+  /**
+   * First sentence after a seek or resume and how far into it to start, in
+   * playback seconds. Consumed by `drain()` and cleared once scheduled.
+   */
+  private pendingOffset: { index: number; seconds: number } | null = null;
 
   private status: PlayerStatus = 'idle';
   private modelProgress: ModelLoadProgress | null = null;
@@ -217,6 +223,14 @@ export class PlayerSession {
     this.currentIndex = restored;
     this.nextScheduleIndex = restored;
     this.requestCursor = restored;
+    // Restore the saved position inside the sentence, not just its start. The
+    // saved value is content seconds; the scheduler needs playback seconds.
+    const restoreContent = clampResumeOffset(
+      saved?.offsetSeconds ?? 0,
+      this.flat[restored]?.sentence.estimatedDuration ?? 0,
+    );
+    this.pendingOffset =
+      restoreContent > 0 ? { index: restored, seconds: restoreContent / this.rate } : null;
 
     this.status = 'idle';
     this.emit();
@@ -345,9 +359,8 @@ export class PlayerSession {
     const playback = Math.min(duration, Math.max(0, seconds));
     // Scrubber time is playback time; the sentence table is stored at 1×.
     const content = playback * this.rate;
-    let index = 0;
-    while (index + 1 < this.total && this.prefixDurations[index + 1] <= content) index += 1;
-    this.seek(index);
+    const { index, offsetSeconds } = sentenceAtContentTime(this.prefixDurations, content);
+    this.seek(index, { offsetSeconds });
   }
 
   seekBy(seconds: number): void {
@@ -388,6 +401,9 @@ export class PlayerSession {
   setRate(rate: number): void {
     const next = clampPlaybackRate(rate);
     if (Math.abs(next - this.rate) < 1e-3) return;
+    // Capture the position on the 1× timeline before the rate changes, so the
+    // restarted sentence resumes where the voice was instead of from its start.
+    const contentOffset = this.currentContentOffset();
     this.rate = next;
     if (!this.book || this.total === 0) {
       this.emit();
@@ -406,7 +422,7 @@ export class PlayerSession {
       return;
     }
 
-    this.restartTimeline();
+    this.restartTimeline(contentOffset);
   }
 
   getRate(): number {
@@ -435,6 +451,7 @@ export class PlayerSession {
     this.currentIndex = 0;
     this.nextScheduleIndex = 0;
     this.requestCursor = 0;
+    this.pendingOffset = null;
     this.contentDuration = 0;
     this.rate = 1;
     this.preroll = INITIAL_PREROLL_SECONDS;
@@ -455,10 +472,13 @@ export class PlayerSession {
   }
 
   private startFrom(index: number): void {
-    this.seek(index, { keepPlaying: true });
+    // Playing a restored or paused session must resume inside the sentence,
+    // not replay it from the start.
+    const offsetSeconds = index === this.currentIndex ? this.currentContentOffset() : 0;
+    this.seek(index, { keepPlaying: true, offsetSeconds });
   }
 
-  private seek(index: number, options: { keepPlaying?: boolean } = {}): void {
+  private seek(index: number, options: { keepPlaying?: boolean; offsetSeconds?: number } = {}): void {
     if (this.total === 0) return;
     this.stopClock();
     this.scheduler.reset();
@@ -473,9 +493,19 @@ export class PlayerSession {
     // not stuck behind minutes of stale synthesis.
     void cancelPending();
 
-    this.currentIndex = Math.min(this.total - 1, Math.max(0, index));
-    this.nextScheduleIndex = this.currentIndex;
-    this.requestCursor = this.currentIndex;
+    const target = Math.min(this.total - 1, Math.max(0, index));
+    this.currentIndex = target;
+    this.nextScheduleIndex = target;
+    this.requestCursor = target;
+
+    // Keep the intra-sentence position across seeks, speed changes and voice
+    // changes. `offsetSeconds` is content time; playback runs at `rate`.
+    const contentOffset = clampResumeOffset(
+      options.offsetSeconds ?? 0,
+      this.flat[target]?.sentence.estimatedDuration ?? 0,
+    );
+    this.pendingOffset =
+      contentOffset > 0 ? { index: target, seconds: contentOffset / this.rate } : null;
 
     const shouldPlay = options.keepPlaying ?? this.playIntent;
     this.playIntent = shouldPlay;
@@ -491,8 +521,21 @@ export class PlayerSession {
     }
   }
 
-  private restartTimeline(): void {
-    this.seek(this.currentIndex, { keepPlaying: this.playIntent });
+  private restartTimeline(contentOffsetSeconds?: number): void {
+    this.seek(this.currentIndex, {
+      keepPlaying: this.playIntent,
+      offsetSeconds: contentOffsetSeconds ?? this.currentContentOffset(),
+    });
+  }
+
+  /** Position inside the current sentence on the 1× content timeline. */
+  private currentContentOffset(): number {
+    const located = this.scheduler.locate();
+    if (located && located.entry.index === this.currentIndex) return located.elapsed * this.rate;
+    if (this.pendingOffset && this.pendingOffset.index === this.currentIndex) {
+      return this.pendingOffset.seconds * this.rate;
+    }
+    return 0;
   }
 
   private pump(): void {
@@ -589,10 +632,14 @@ export class PlayerSession {
       // timeline without contributing audio.
       if (result.audio.length === 0) {
         this.ready.delete(this.nextScheduleIndex);
+        if (this.pendingOffset?.index === this.nextScheduleIndex) this.pendingOffset = null;
         this.nextScheduleIndex += 1;
         continue;
       }
 
+      const pending = this.pendingOffset;
+      const startOffsetSeconds =
+        pending && pending.index === this.nextScheduleIndex ? pending.seconds : undefined;
       const added = this.scheduler.schedule({
         sentenceId: entry.sentence.id,
         chapterIndex: entry.chapterIndex,
@@ -600,10 +647,12 @@ export class PlayerSession {
         audio: result.audio,
         sampleRate: result.sampleRate,
         timings: result.timings,
+        ...(startOffsetSeconds ? { startOffsetSeconds } : {}),
       });
       // Keep the audio queued if the graph is not ready yet; dropping it here
       // would strand the timeline and force a second synthesis pass.
       if (!added) break;
+      if (startOffsetSeconds) this.pendingOffset = null;
       this.ready.delete(this.nextScheduleIndex);
       this.nextScheduleIndex += 1;
       scheduled = true;
@@ -675,7 +724,9 @@ export class PlayerSession {
           wordProgress: wordProgressAt(located.entry.timings, elapsed),
           sentenceProgress:
             located.entry.duration > 0 ? Math.min(1, elapsed / located.entry.duration) : 0,
-          positionSeconds: ((this.prefixDurations[this.currentIndex] ?? 0) + elapsed) / this.rate,
+          // `elapsed` is already playback seconds inside the stretched buffer;
+          // only the sentence start needs converting from content time.
+          positionSeconds: (this.prefixDurations[this.currentIndex] ?? 0) / this.rate + elapsed,
         };
         for (const listener of this.frameListeners) listener(frame);
       }
@@ -723,7 +774,7 @@ export class PlayerSession {
     void cancelPending();
     this.saveProgress();
     const duration = this.playbackDuration();
-    updatePositionState(duration, duration, this.rate);
+    updatePositionState(duration, duration);
   }
 
   private fail(error: unknown, fallback: string): void {
@@ -754,9 +805,6 @@ export class PlayerSession {
     // Status changes (buffering, pause) also emit while a sentence is partly
     // played, so report the real offset instead of snapping back to the
     // sentence start in the scrubber.
-    const located = this.scheduler.locate();
-    const elapsed =
-      located && located.entry.index === this.currentIndex ? located.elapsed : 0;
     this.snapshot = {
       bookId: this.book?.id ?? null,
       status: this.status,
@@ -767,7 +815,7 @@ export class PlayerSession {
       sentence,
       modelProgress: this.modelProgress,
       error: this.error,
-      positionSeconds: ((this.prefixDurations[this.currentIndex] ?? 0) + elapsed) / this.rate,
+      positionSeconds: this.positionSeconds(),
       durationSeconds: this.playbackDuration(),
     };
     for (const listener of this.listeners) listener();
@@ -777,9 +825,9 @@ export class PlayerSession {
     if (!this.book) return;
     const entry = this.flat[this.currentIndex];
     if (!entry) return;
-    const located = this.scheduler.locate();
-    const offset =
-      located && located.entry.index === this.currentIndex ? located.elapsed : 0;
+    // Offsets are stored on the 1× content timeline so the same record is
+    // correct at any playback speed.
+    const offset = this.currentContentOffset();
 
     const progress: ReadingProgress = {
       bookId: this.book.id,
@@ -796,7 +844,9 @@ export class PlayerSession {
     const now = performance.now();
     if (now - this.lastPositionUpdate < 1000) return;
     this.lastPositionUpdate = now;
-    updatePositionState(this.playbackDuration(), this.positionSeconds(), this.rate);
+    // The media timeline is playback time (content / rate), so it advances at
+    // 1× wall clock; the narration rate is already baked into the duration.
+    updatePositionState(this.playbackDuration(), this.positionSeconds());
   }
 
   private playbackDuration(): number {
@@ -804,11 +854,7 @@ export class PlayerSession {
   }
 
   private positionSeconds(): number {
-    const located = this.scheduler.locate();
-    const content =
-      located && located.entry.index === this.currentIndex
-        ? (this.prefixDurations[this.currentIndex] ?? 0) + located.elapsed
-        : (this.prefixDurations[this.currentIndex] ?? 0);
+    const content = (this.prefixDurations[this.currentIndex] ?? 0) + this.currentContentOffset();
     return content / this.rate;
   }
 
