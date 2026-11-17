@@ -19,7 +19,7 @@ import {
 } from '@/core/workers/ttsClient';
 import { AudioScheduler } from '@/core/audio/audioScheduler';
 import { clampPlaybackRate } from '@/core/audio/rate';
-import { clampResumeOffset, sentenceAtContentTime } from '@/core/audio/timeline';
+import { clampResumeOffset, sentenceAtContentTime, buildDurationTable } from '@/core/audio/timeline';
 import { scaleTimings } from '@/core/audio/wsola';
 import { stretchAudio } from '@/core/workers/stretchClient';
 import {
@@ -111,6 +111,8 @@ export class PlayerSession {
   private book: BookDocument | null = null;
   private flat: FlatSentence[] = [];
   private prefixDurations: number[] = [];
+  /** Content seconds per sentence; estimates until its audio is prepared. */
+  private durations: number[] = [];
   private total = 0;
 
   private voice: VoiceSelection = { primary: 'af_heart' };
@@ -194,13 +196,11 @@ export class PlayerSession {
     this.preroll = INITIAL_PREROLL_SECONDS;
 
     this.flat = [];
-    this.prefixDurations = [];
-    let elapsed = 0;
+    this.durations = [];
     for (const chapter of book.chapters) {
       for (const paragraph of chapter.paragraphs) {
         for (const sentence of paragraph.sentences) {
-          this.prefixDurations.push(elapsed);
-          elapsed += sentence.estimatedDuration;
+          this.durations.push(sentence.estimatedDuration);
           this.flat.push({
             sentence,
             chapterIndex: chapter.index,
@@ -209,8 +209,10 @@ export class PlayerSession {
         }
       }
     }
+    const table = buildDurationTable(this.durations);
+    this.prefixDurations = table.starts;
     this.total = this.flat.length;
-    this.contentDuration = Math.max(book.estimatedDuration, elapsed);
+    this.contentDuration = Math.max(book.estimatedDuration, table.total);
     this.scheduler.setVolume(options.volume ?? 1);
 
     let saved: ReadingProgress | undefined;
@@ -447,6 +449,7 @@ export class PlayerSession {
     this.book = null;
     this.flat = [];
     this.prefixDurations = [];
+    this.durations = [];
     this.total = 0;
     this.currentIndex = 0;
     this.nextScheduleIndex = 0;
@@ -605,6 +608,10 @@ export class PlayerSession {
 
         this.requested.delete(index);
         if (generation !== this.generation) return;
+        // Replace the estimate with the real audio length. Prefixes for later
+        // sentences shift only after this one, so the current position stays
+        // continuous while the scrubber stops guessing at boundaries.
+        this.setSentenceDuration(index, prepared.duration * rate);
         this.ready.set(index, prepared);
         this.drain();
       })
@@ -616,6 +623,25 @@ export class PlayerSession {
           this.fail(error, 'This sentence could not be narrated.');
         }
       });
+  }
+
+  /**
+   * Replaces a sentence's estimate with the prepared audio length and rebuilds
+   * the running start times. Called once per resolved sentence, so the
+   * scrubber follows real audio instead of drifting at estimated boundaries.
+   */
+  private setSentenceDuration(index: number, duration: number): void {
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    const previous = this.durations[index];
+    if (previous !== undefined && Math.abs(previous - duration) < 0.02) return;
+
+    this.durations[index] = duration;
+    const table = buildDurationTable(this.durations);
+    this.prefixDurations = table.starts;
+    // Keep the bar at least as long as the point we are already at, even if
+    // the remaining estimates turned out generous.
+    const current = (this.prefixDurations[this.currentIndex] ?? 0) + this.currentContentOffset();
+    this.contentDuration = Math.max(table.total, current);
   }
 
   private drain(): void {

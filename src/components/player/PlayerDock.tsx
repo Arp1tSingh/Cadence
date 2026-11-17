@@ -65,7 +65,15 @@ export function PlayerDock({
   useEffect(() => {
     if (rangeRef.current) {
       rangeRef.current.max = String(duration || 0);
-      rangeRef.current.value = String(snapshot.positionSeconds);
+      // Frames own the slider while audio plays. A snapshot computed a beat
+      // earlier at a sentence boundary would otherwise step it back one
+      // 0.5 s tick. Only forward corrections are safe mid-playback; seeks and
+      // pauses (status changes) still write the exact position.
+      const current = Number(rangeRef.current.value);
+      const next = snapshot.positionSeconds;
+      if (snapshot.status !== 'playing' || next >= current) {
+        rangeRef.current.value = String(next);
+      }
       rangeRef.current.style.setProperty(
         '--progress',
         duration > 0 ? `${(snapshot.positionSeconds / duration) * 100}%` : '0%',

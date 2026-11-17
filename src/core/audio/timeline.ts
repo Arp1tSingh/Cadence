@@ -14,6 +14,27 @@ export type ContentPosition = {
   offsetSeconds: number;
 };
 
+export type DurationTable = {
+  /** Start time of every sentence, in 1× content seconds. */
+  starts: number[];
+  total: number;
+};
+
+/**
+ * Builds the running start times for a duration list. The session rebuilds
+ * this as real audio lengths replace estimates, so the scrubber timeline
+ * follows playback instead of drifting at estimated sentence boundaries.
+ */
+export function buildDurationTable(durations: readonly number[]): DurationTable {
+  const starts = new Array<number>(durations.length);
+  let elapsed = 0;
+  for (let index = 0; index < durations.length; index += 1) {
+    starts[index] = elapsed;
+    elapsed += durations[index];
+  }
+  return { starts, total: elapsed };
+}
+
 /**
  * Finds the sentence that contains `contentSeconds` and the offset inside it.
  * `prefixDurations` holds each sentence's start time, so the last start at or

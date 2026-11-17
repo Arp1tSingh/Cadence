@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildDurationTable,
   clampResumeOffset,
   MIN_RESUME_TAIL_SECONDS,
   sentenceAtContentTime,
@@ -7,6 +8,19 @@ import {
 } from './timeline';
 
 const PREFIX = [0, 4, 10.5, 22];
+
+describe('buildDurationTable', () => {
+  it('accumulates starts and the total', () => {
+    expect(buildDurationTable([2, 3.5, 0, 1.25])).toEqual({
+      starts: [0, 2, 5.5, 5.5],
+      total: 6.75,
+    });
+  });
+
+  it('handles an empty list', () => {
+    expect(buildDurationTable([])).toEqual({ starts: [], total: 0 });
+  });
+});
 
 describe('sentenceAtContentTime', () => {
   it('returns the first sentence for the beginning and negative input', () => {
