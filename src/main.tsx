@@ -29,4 +29,19 @@ if (import.meta.env.DEV) {
     .catch((error: unknown) => {
       console.warn('[cadence] thread benchmark unavailable', error);
     });
+
+  // Dev-only Flash/Piper spike used to pick the voice and verify the real-time
+  // gate before the engine is wired into playback.
+  void import('@/core/tts/flashSpike')
+    .then(({ runFlashSpike, downloadFlashSamples }) => {
+      const target = window as unknown as {
+        __cadenceFlashSpike?: typeof runFlashSpike;
+        __cadenceFlashSamples?: typeof downloadFlashSamples;
+      };
+      target.__cadenceFlashSpike = runFlashSpike;
+      target.__cadenceFlashSamples = downloadFlashSamples;
+    })
+    .catch((error: unknown) => {
+      console.warn('[cadence] Flash spike unavailable', error);
+    });
 }

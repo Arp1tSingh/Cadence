@@ -38,14 +38,15 @@ There is no backend, no telemetry, and no user-data upload. The only external re
 | Workers | Vite module workers + Comlink |
 | EPUB | JSZip + `fast-xml-parser` + `linkedom/worker` |
 | PDF | `pdfjs-dist` 4.10.x, local worker/CMaps/fonts |
-| TTS | `kokoro-js` for model/tokenizer; custom inference wrapper for style blending and timing |
-| Phonemizer | `phonemizer` (bundled espeak-ng) |
-| Export | Mediabunny + `@mediabunny/mp3-encoder`; WebCodecs AAC for M4B |
+| TTS | **Flash** = Piper/VITS (`onnxruntime-web` directly); **Studio** = `kokoro-js` with a custom inference wrapper for style blending and timing |
+| Flash voices | Six 22.05 kHz Piper medium voices in OPFS; single narrator per voice, no blending; weights downloaded at runtime from `rhasspy/piper-voices` |
+| Phonemizer | `phonemizer` (bundled espeak-ng) for both engines |
+| Export | Mediabunny + `@mediabunny/mp3-encoder`; WebCodecs AAC for M4B; engine choice (Studio/Flash) with an estimated time |
 | M4B chapters | Nero `chpl` atom patched into `moov/udta` after muxing |
-| Audio cache | 16-bit PCM in OPFS (half the disk of Float32), converted to Float32 on read |
+| Audio cache | 16-bit PCM in OPFS (half the disk of Float32), converted to Float32 on read; `sampleRate` + `engine` per entry |
 | Speed control | Offline WSOLA in `stretch.worker.ts`; no re-synthesis, no pitch shift |
 | WASM threads | Estimate physical cores as `ceil(hardwareConcurrency / 2)`, capped at 8. Never use every logical CPU; measured best on the QA i5 (4C/8T) is 4. |
-| Model QA | Kokoro `q8` (~92 MB) via WASM; WebGPU `fp32` is an optional quality mode |
+| Model QA | Default `flash` (Piper medium, ~63 MB, 2.36× real time at 4 threads); `balanced` = Kokoro q8 WASM (~92 MB); `quality` = Kokoro fp32 WebGPU (~326 MB) |
 | Test content | Public-domain Gutenberg EPUB + arXiv PDF + synthetic fixtures |
 
 Detailed rationale for these choices is in the conversation/blueprint; the important thing is not to regress them without a strong reason and a note here.
@@ -357,7 +358,18 @@ Add one dated entry per milestone. Keep entries short: what changed, what passed
 - Measured on the QA laptop (4 cores / 8 logical, Kokoro q8, 4.28 s of audio per run): RTF **0.14 / 0.17 / 0.18 / 0.16 / 0.17 / 0.17** for 1/2/4/6/7/8 threads. Four threads is the measured optimum (1.29× over one thread, ~23.2 s per sentence); 6–8 threads oversubscribe the physical cores and regress ~10%. The earlier `logical - 1` policy (7 threads) would have been slower and was corrected.
 - `configureEnvironment()` now applies an explicit thread override, clamps to one thread without `crossOriginIsolated`, and keeps `wasmThreads` in `ModelInfo`/dev logs. Fixed a benchmark bug where `synthesizeSentence()` defaulted to the `cadence-tts` worker and tore down the freshly loaded `cadence-tts:threads=N` worker; synthesis now accepts the same name. Progress forwarding is deduplicated.
 - Verified: typecheck, lint (0 warnings), 28 test files / 193 tests, production build (`index-DaXo3ACI.js`); `dist/` contains no benchmark hook or dev diagnostics.
-- Next: the Flash engine plan is saved at `C:\Users\Admin\.opencode\plan\flash-mode-plan.md`; its five decisions (default tier, voice variant, export policy, `auto` semantics, voice-set size) still need answers before implementation.
+- Next: implement the Flash engine integration (see the next entry).
+
+### 2026-11-18 — Flash engine spike and decisions
+
+- **Product decisions locked.** Default tier for new installs is **Flash**. Tier set is **`flash`, `balanced`, `quality`** — `auto` is removed and stored `auto` migrates to `flash`. Flash uses one narrator (no blending). Exports offer a **Studio/Flash choice with an estimated time**, defaulting to Studio. Initial catalog is **six** Piper medium voices.
+- Built the spike: `core/tts/piper.ts` (config parser, longest-match IPA tokenizer, BOS/PAD/EOS ID builder, scales, output flattening) with 8 tests; `workers/flashSpike.worker.ts` (direct `onnxruntime-web`, OPFS model/config cache, phonemizer, session load/synthesize); `core/workers/flashSpikeClient.ts` (fresh worker per thread count); `core/tts/flashSpike.ts` (voice sources, three sentences, per-sentence warm-up, RTF summary, WAV encoder). `src/types/onnxruntime-web.d.ts` supplies the types the package's exports map hides.
+- Measured `en_US-amy-medium` (22.05 kHz, 63.2 MB, inputs `input`/`input_lengths`/`scales`, output `output`), 3 runs per sentence after an excluded per-sentence warm-up: **1 thread 1.29× median RTF; 4 threads 2.36×** (short 1.99×, medium 2.36×, long 2.58×); 1→4 scaling **1.83×**. Kokoro q8 is 0.18× on the same laptop, so Flash is ~13× faster and clears the 2× gate. Model download 19.9 s cold / 0.35 s cached; session init 5.9–7.6 s. Audio peaks 0.54–0.71, RMS 0.075–0.091.
+- Medium (22.05 kHz) is the Flash default; the low 16 kHz variant is not needed.
+- Voice catalog (all 22.05 kHz medium): `en_US-kathleen-medium` (CC0, default), `en_US-amy-medium` (CC BY-SA 4.0), `en_GB-alba-medium` (CC BY 4.0), `en_US-joe-medium` (CC0), `en_US-norman-medium` (public domain), `en_GB-northern_english_male-medium` (CC BY-SA 4.0). Rejected `ryan`/`hfc_*` (NC), `lessac` (Blizzard), `jenny_dioco` (no license).
+- Plan updated at `C:\Users\Admin\.opencode\plan\flash-mode-plan.md`; listening test still pending because headless browser downloads were blocked.
+- Verified: typecheck, lint (0 warnings), 29 test files / 201 tests, production build; `dist/` contains no spike hook.
+- Next: Phase 1 — engine abstraction and a Piper adapter inside `tts.worker.ts`, sharing the queue, lexicon, and cache.
 
 ## Context-Management Protocol
 
