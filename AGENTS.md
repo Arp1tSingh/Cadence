@@ -44,6 +44,7 @@ There is no backend, no telemetry, and no user-data upload. The only external re
 | M4B chapters | Nero `chpl` atom patched into `moov/udta` after muxing |
 | Audio cache | 16-bit PCM in OPFS (half the disk of Float32), converted to Float32 on read |
 | Speed control | Offline WSOLA in `stretch.worker.ts`; no re-synthesis, no pitch shift |
+| WASM threads | Estimate physical cores as `ceil(hardwareConcurrency / 2)`, capped at 8. Never use every logical CPU; measured best on the QA i5 (4C/8T) is 4. |
 | Model QA | Kokoro `q8` (~92 MB) via WASM; WebGPU `fp32` is an optional quality mode |
 | Test content | Public-domain Gutenberg EPUB + arXiv PDF + synthetic fixtures |
 
@@ -63,6 +64,11 @@ npm run test:watch
 ```
 
 Always run `npm run typecheck && npm run lint && npm run test && npm run build` before pushing a milestone.
+
+### Dev Diagnostics
+
+- In `npm run dev`, run `await window.__cadenceThreadBenchmark()` in the browser console to sweep 1/2/4/6/7/8 WASM threads on the current device. It downloads the Kokoro model once, then spawns a fresh TTS worker per count (ORT cannot resize its pool). Do not run it while narrating; it terminates the active worker. Results are also logged as `[Cadence] synthesis` real-time factors.
+- `npm run dev` console logs `[Cadence] model loaded` with device, dtype, thread count, `crossOriginIsolated`, and cache state. Production builds strip these.
 
 ### Build Notes
 
@@ -172,8 +178,8 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 - Real-browser QA (Edge, `playwright-core`): q8 WASM download (88 MB), model init, word-level playback, prefetch cache growth, pause/resume, next sentence, chapter jump, per-voice caching (`af_heart` + `bf_emma`), 1.5× WSOLA duration (52,082 s → 34,721 s), Book Page word sweep and tap seek, 76 chapter rows with cache rings, and a 3-voice blend cached under `af_heart+bf_emma-48+am_michael-47` with all three shares in the dock.
 - Export QA uses a synthetic two-chapter book with pre-seeded Int16 cache (45 tones): M4B whole-book → 865,332 B, 77.40 s, boxes `ftyp/mdat/moov`, moov at EOF, `chpl` marks at 0 s and 68.8 s, decodes to 77.42 s; MP3 chapter → 138,932 B, 8.60 s, decodes to 8.64 s; pause held the encoder, resume finished, cancel deleted the partial file, and three history rows persisted. Headless Edge has no AAC encoder; headed Edge encodes AAC at 44.1/48 kHz, not 24 kHz — hence the resample.
 - Settings QA (fresh Edge profile, synthetic 1-chapter/3-sentence book): model tier, lexicon entry, and citation/URL rules persisted across reloads. Default-profile audio read `0 of 1 fully cached` under the new speech profile; re-seeding the respelled cache with `speechKey 7d177ad4` read `1 of 1 fully cached`. Playback used the seeded respelled cache and stayed at 6 entries (no new inference). A 512 MB cap reclaimed 7 oldest-first entries and left 2; clear-all left 0; zero console/page errors.
-- Measured on the QA laptop (i5-8265U, 15 W, 4 threads): Kokoro q8 WASM runs at roughly **0.2× real time** (3.7 s of audio in ~19–25 s), and fp32 WASM is not faster. Threading scales only ~1.1×. The UI now labels this state instead of showing an indefinite spinner.
-- `npm run typecheck && npm run lint && npm run test && npm run build` passes (26 test files / 173 tests locally; the two real-book fixture tests skip when the gitignored `test/` fixtures are absent, zero lint warnings).
+- Measured on the QA laptop (i5-8265U, 15 W, 4 cores / 8 logical): Kokoro q8 WASM runs at **0.18× real time at 4 threads** (4.28 s of audio in ~23 s), and fp32 WASM is not faster. A dev thread sweep (1/2/4/6/7/8 threads, 3 measured runs each) measured RTF **0.14 / 0.17 / 0.18 / 0.16 / 0.17 / 0.17**; 1→4 threads is 1.29×, while 6–8 threads oversubscribe the four physical cores and regress. The observed ~50% CPU was exactly 4 of 8 logical CPUs — the measured optimum, not a disabled thread pool. The policy is now `ceil(logical / 2)` capped at 8 (4 on this machine), and `window.__cadenceThreadBenchmark()` re-checks any device. The UI labels slow synthesis instead of showing an indefinite spinner.
+- `npm run typecheck && npm run lint && npm run test && npm run build` passes (28 test files / 193 tests locally; the two real-book fixture tests skip when the gitignored `test/` fixtures are absent, zero lint warnings).
 - PDF outline QA on *Mushoku Tensei: Jobless Reincarnation Vol. 16* (233 pages, 16 image pages, 16 outline entries): import finishes in 9 s on Vercel with 10 narrated chapters, exact outline titles through the Extra Chapter, 71,125 words, and a 170,895-byte OPFS cover extracted from page 1. The old heuristic produced title-only stubs and split body chunks; outline page ranges plus title-fragment stripping fix that. Cold live playback reached 0.5 s in 95 s with one cache entry and zero console/page errors. Inline image-only pages are skipped for narration; the drop-cap opener now stays at body size, so chapter 3 starts with "TWO DAYS HAD PASSED since I summoned our Guardian Beast." instead of a false heading.
 - **PDF illustrations — complete.** After the scanned-PDF guard, PDF import treats pages after the cover with ≤200 non-whitespace characters as candidates and keeps them only when the operator list paints an image of ≥250,000 px. Candidates must fall inside the narrated outline range, so front color inserts and the back-cover logo never reach storage. Accepted pages are rendered by the parser worker (OffscreenCanvas → JPEG, 1600 px long edge, q0.84) to `/illustrations/<bookId>/<page>.jpg`; IndexedDB stores only page index, dimensions, MIME type, and byte size. `ParagraphNode`/`SentenceNode` gained `pageIndex` (plus `pageEndIndex` for paragraphs crossing a page break), and `sentencePage()` distributes sentences proportionally across a multi-page paragraph. The player shows the artwork for `sentence.pageIndex + 1` in a pinned card above the lyrics or Book Page, so it stays visible while the previous page is read; `useIllustrationImage` loads it from OPFS as a revocable object URL. Settings → Narration → Reading toggles `showIllustrations` (default on). `PARSER_VERSION` is now `1.1.0`; PDFs imported before this change need re-importing because their records carry no page provenance or artwork.
 - **Phase 6 — complete.** Development-only diagnostics in `src/lib/devLog.ts` log the loaded model's device, dtype, WASM thread count, `crossOriginIsolated`, and per-sentence real-time factor; the helper is gated by `import.meta.env.DEV` and is absent from the production bundle. Real-browser QA (fresh Chromium + Playwright, Vite dev server): `crossOriginIsolated: true`, `wasm/q8`, 4 threads, `cacheHit: false`; first sentence 1.8 s audio / 9.66 s wall / 0.19× RTF; lyric sweep advanced; Book Page auto-scroll moved `scrollTop` 0→915; the resume pill appeared; reload restored `ch01_p10_s06` at `scrollTop` 1003 with zero console/page errors. This QA exposed and fixed a resume race: `playerStore.openBook` published `bookId` before `playerSession.open()` finished, so `BookPage` mounted against the empty snapshot and showed no active sentence after reload. `bookId` and the restored snapshot now publish together after progress loads.
@@ -197,6 +203,7 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 | 6. Diagnostics | Complete | Dev-only model/synthesis logs, real-time factor, reload-resume fix |
 | 7. Performance pass | Complete | Preroll, cache writer, compositor, reader, state cache, scrubber |
 | 8. Playback accuracy + EPUB cleanup | Complete | Sentence-exact resume, cache scan retries, EPUB 1.2.0, dock buffering counter |
+| 9. WASM thread verification | Complete | Measured 1/2/4/6/7/8 threads; 4 is optimal on 4C/8T; benchmark hook |
 
 ## Progress Log
 
@@ -342,6 +349,16 @@ Add one dated entry per milestone. Keep entries short: what changed, what passed
 - Two extra fixes found by the QA: MediaSession position state now reports the playback timeline at 1× rate between updates, and the dock no longer writes older snapshot positions over the live scrubber.
 - Verified: typecheck, lint (0 warnings), 27 test files / 188 tests, production build.
 
+### 2026-11-18 — WASM thread verification and policy
+
+- Investigated the report that CPU stays below 50% during synthesis. The old code set `env.backends.onnx.wasm.numThreads = min(4, hardwareConcurrency)`, which is 4 of 8 logical CPUs on the QA i5-8265U — exactly the observed ~50%, not a disabled pool. ORT's own default is also `min(4, ceil(logical / 2))`, and it reads `numThreads` once when the WASM backend initializes.
+- Added `src/core/tts/threads.ts`: `defaultTtsThreads()` estimates physical cores as `ceil(logical / 2)` and caps at `MAX_TTS_THREADS = 8`; `parseThreadOverride()` reads a dev worker name like `cadence-tts:threads=6`. 5 tests.
+- Added `src/core/tts/threadBenchmark.ts` (dev-only, `window.__cadenceThreadBenchmark()`), which disposes and recreates the TTS worker per count because ORT cannot resize a live pool, loads Kokoro q8 once into OPFS, and runs 1 warmup + 3 measured 13-word sentences with `skipCache: true`.
+- Measured on the QA laptop (4 cores / 8 logical, Kokoro q8, 4.28 s of audio per run): RTF **0.14 / 0.17 / 0.18 / 0.16 / 0.17 / 0.17** for 1/2/4/6/7/8 threads. Four threads is the measured optimum (1.29× over one thread, ~23.2 s per sentence); 6–8 threads oversubscribe the physical cores and regress ~10%. The earlier `logical - 1` policy (7 threads) would have been slower and was corrected.
+- `configureEnvironment()` now applies an explicit thread override, clamps to one thread without `crossOriginIsolated`, and keeps `wasmThreads` in `ModelInfo`/dev logs. Fixed a benchmark bug where `synthesizeSentence()` defaulted to the `cadence-tts` worker and tore down the freshly loaded `cadence-tts:threads=N` worker; synthesis now accepts the same name. Progress forwarding is deduplicated.
+- Verified: typecheck, lint (0 warnings), 28 test files / 193 tests, production build (`index-DaXo3ACI.js`); `dist/` contains no benchmark hook or dev diagnostics.
+- Next: the Flash engine plan is saved at `C:\Users\Admin\.opencode\plan\flash-mode-plan.md`; its five decisions (default tier, voice variant, export policy, `auto` semantics, voice-set size) still need answers before implementation.
+
 ## Context-Management Protocol
 
 This project is large; protect context deliberately:
@@ -379,7 +396,7 @@ This project is large; protect context deliberately:
 
 - M4B `chpl` chapter compatibility in Apple Books (accepted; can add a QuickTime chapter track later).
 - Rendered PCM can still reach multiple GB before eviction; the default 2 GB soft cap checks the running byte total on every cache write and sweeps oldest-first when over, plus immediately when the cap is lowered. Clearing rendered audio keeps models, books, progress, and exports.
-- WASM-only devices may synthesize slower than real time; measured ~0.2× real time on a 15 W i5 with q8, so buffering can last tens of seconds per sentence. The dock labels this, but the next real lever is WebGPU (real adapter) and/or a faster WASM configuration.
+- WASM-only devices may synthesize slower than real time; measured 0.18× real time at the optimal 4 threads on a 15 W i5 with q8, so buffering can last tens of seconds per sentence. The WASM pool is now sized to estimated physical cores because 6–8 threads measured slower; more CPU is not the lever. The dock labels the state; the real levers are WebGPU (real adapter) and the planned Flash/Piper engine.
 - Lexicon replacements are respellings, not IPA: `phonemizer` only emits IPA and espeak `[[...]]` input is not exposed, so users must spell the sound (`Her-my-oh-nee`). Revisit if the engine gains phoneme input.
 - A tier change disposes and reloads the ONNX session on the next narration start. The old session stays resident until then; switching back and forth repeatedly can re-download nothing (OPFS cache) but does pay session init each time.
 - Seek, voice change, and pause call `cancelPending()`; the one in-flight inference still finishes and is cached, so a switch can lag by at most one sentence.
@@ -393,7 +410,7 @@ This project is large; protect context deliberately:
 
 Verified during the performance pass; each item is a known cost that was not removed because the fix was larger than the phase allowed.
 
-- **Synthesis speed is unchanged.** Kokoro `q8` WASM still runs at roughly 0.2× real time on a 15 W CPU. The preroll only hides the gaps; it does not make inference faster. WebGPU on a real adapter is the only large lever left.
+- **Synthesis speed is unchanged.** Kokoro `q8` WASM still runs at roughly 0.18× real time at the measured-best 4 threads on a 15 W CPU (0.14× at 1 thread). The preroll only hides the gaps; it does not make inference faster. Threads beyond the four physical cores regress, so more CPU is not the lever. WebGPU on a real adapter and the planned Flash/Piper engine are the remaining large levers.
 - **Book Page still mounts every word span.** `content-visibility` skips layout and paint for offscreen paragraphs, but a long chapter still creates thousands of DOM nodes and ref callbacks at open. Virtualising paragraphs would remove that cost and is the next large win.
 - **`readChapterCacheStats` reads full cache rows.** It uses the `byBook` index and therefore deserialises every sentence's word timings just to count sentences per chapter. It now runs on open, on chapter change, and every 15 s instead of every 5 s; a size/count-only projection would make it nearly free.
 - **Cache accounting self-heals rather than synchronises.** The TTS worker keeps its own running byte total. Clearing rendered audio or deleting a book from the main thread does not push the new total into the worker; the next over-cap sweep rescans and corrects it.

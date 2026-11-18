@@ -20,6 +20,7 @@ import {
 } from './constants';
 import { alignWords, offsetTimings } from './timing';
 import { concatPcm } from './pcm';
+import { defaultTtsThreads, parseThreadOverride } from './threads';
 import { devLog, realTimeFactor } from '@/lib/devLog';
 import {
   getVoice,
@@ -53,8 +54,17 @@ function assetUrl(path: string): string {
 let configured = false;
 let wasmThreads = 1;
 
-function configureEnvironment(): void {
-  if (configured) return;
+function configureEnvironment(threads?: number): void {
+  if (configured) {
+    // ORT reads this once when the WASM backend initializes. A live session
+    // cannot resize its pool, so the benchmark uses a fresh worker per count.
+    if (import.meta.env.DEV && threads !== undefined && threads !== wasmThreads) {
+      console.warn(
+        `[cadence] TTS threads are already ${wasmThreads}; start a new worker to use ${threads}.`,
+      );
+    }
+    return;
+  }
   configured = true;
 
   env.allowLocalModels = false;
@@ -68,11 +78,16 @@ function configureEnvironment(): void {
   if (wasm) {
     wasm.wasmPaths = assetUrl('wasm/');
     wasm.proxy = false;
-    wasm.numThreads =
-      typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated
-        ? Math.max(1, Math.min(4, navigator.hardwareConcurrency || 2))
-        : 1;
-    wasmThreads = wasm.numThreads;
+    const isolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated;
+    const override =
+      threads ??
+      parseThreadOverride(typeof self !== 'undefined' ? self.name : undefined) ??
+      defaultTtsThreads(navigator.hardwareConcurrency, isolated);
+    // Without SharedArrayBuffer ORT cannot spawn pthreads at all, even if a
+    // caller asks for more.
+    const resolved = isolated ? override : 1;
+    wasm.numThreads = resolved;
+    wasmThreads = resolved;
   }
 }
 
@@ -177,8 +192,9 @@ function aggregateProgress(
 async function loadEngine(
   tier: ModelTier,
   onProgress?: (progress: ModelLoadProgress) => void,
+  threads?: number,
 ): Promise<LoadedEngine> {
-  configureEnvironment();
+  configureEnvironment(threads);
 
   const hasWebGpu = await detectWebGpu();
   const plan = modelPlanForTier(tier, hasWebGpu);
@@ -298,6 +314,7 @@ async function loadEngine(
 export async function ensureModel(
   tier: ModelTier,
   onProgress?: (progress: ModelLoadProgress) => void,
+  options?: { threads?: number },
 ): Promise<ModelInfo> {
   // A tier switch must actually swap the ONNX session; otherwise the settings
   // toggle would appear to work but keep narrating with the old model.
@@ -315,10 +332,11 @@ export async function ensureModel(
       dtype: engine.dtype,
       tier: engine.tier,
       cacheHit: engine.cacheHit,
+      threads: wasmThreads,
     };
   }
 
-  loading = loadEngine(tier, onProgress)
+  loading = loadEngine(tier, onProgress, options?.threads)
     .then((loaded) => {
       engine = loaded;
       return loaded;
@@ -335,6 +353,7 @@ export async function ensureModel(
     dtype: loaded.dtype,
     tier: loaded.tier,
     cacheHit: loaded.cacheHit,
+    threads: wasmThreads,
   };
 }
 

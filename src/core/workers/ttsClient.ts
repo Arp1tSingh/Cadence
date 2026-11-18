@@ -11,13 +11,19 @@ import type {
 
 let api: Comlink.Remote<TtsWorkerApi> | null = null;
 let worker: Worker | null = null;
+let workerName: string | null = null;
 
-function getApi(): Comlink.Remote<TtsWorkerApi> {
+function getApi(name = 'cadence-tts'): Comlink.Remote<TtsWorkerApi> {
+  // A worker cannot resize ORT's pool after startup. A different name (the
+  // benchmark uses `cadence-tts:threads=N`) means a different configuration,
+  // so replace the worker instead of silently reusing the old thread count.
+  if (api && name !== workerName) disposeTtsWorker();
   if (!api) {
     worker = new Worker(new URL('../../workers/tts.worker.ts', import.meta.url), {
       type: 'module',
-      name: 'cadence-tts',
+      name,
     });
+    workerName = name;
     api = Comlink.wrap<TtsWorkerApi>(worker);
   }
   return api;
@@ -26,17 +32,19 @@ function getApi(): Comlink.Remote<TtsWorkerApi> {
 export async function ensureTtsModel(
   tier: ModelTier,
   onProgress?: (progress: ModelLoadProgress) => void,
+  options?: { threads?: number; name?: string },
 ): Promise<ModelInfo> {
-  return getApi().ensureModel(
-    { tier },
+  return getApi(options?.name).ensureModel(
+    { tier, threads: options?.threads },
     onProgress ? Comlink.proxy(onProgress) : undefined,
   );
 }
 
 export async function synthesizeSentence(
   request: SynthesisRequest,
+  options?: { name?: string },
 ): Promise<SynthesizedSentence> {
-  return getApi().synthesize(request);
+  return getApi(options?.name).synthesize(request);
 }
 
 /** Caches a sentence for export without transferring its PCM. */
@@ -60,6 +68,7 @@ export function disposeTtsWorker(): void {
   worker?.terminate();
   worker = null;
   api = null;
+  workerName = null;
 }
 
 export type {

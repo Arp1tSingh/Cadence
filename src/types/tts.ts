@@ -26,6 +26,11 @@ export type VoiceSelection = {
 
 export type ModelLoadRequest = {
   tier: ModelTier;
+  /**
+   * Explicit WASM thread count. Only diagnostics and the device benchmark set
+   * this; normal playback lets the engine size the pool from the device.
+   */
+  threads?: number;
 };
 
 export type ModelLoadProgress = {
@@ -43,6 +48,8 @@ export type ModelInfo = {
   dtype: TtsDtype;
   tier: ModelTier;
   cacheHit: boolean;
+  /** WASM thread count the session was initialized with. */
+  threads?: number;
 };
 
 export type SynthesisRequest = {
@@ -63,6 +70,11 @@ export type SynthesisRequest = {
    * after a batch of writes; zero or negative means unlimited.
    */
   cacheCapBytes?: number;
+  /**
+   * Skip the OPFS/IndexedDB write for this result. Used by the dev thread
+   * benchmark so disk I/O does not hide inference scaling.
+   */
+  skipCache?: boolean;
 };
 
 export type SynthesizedSentence = {

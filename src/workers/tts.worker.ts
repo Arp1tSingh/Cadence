@@ -131,20 +131,23 @@ async function runAudioJob(job: AudioJob): Promise<SynthesizedSentence> {
 
   // Encode while the Float32 buffer still exists: Comlink transfers (and
   // detaches) it when this job resolves. The disk write is queued instead of
-  // awaited so playback starts as soon as inference finishes.
-  enqueueCacheWrite(
-    encodeSentenceCache({
-      bookId,
-      voiceKey: job.voiceKey,
-      cacheKey: job.key,
-      sentenceId: sentence.id,
-      chapterIndex: sentence.chapterIndex,
-      audio: synthesized.audio,
-      timings: synthesized.timings,
-      speechKey: job.speechKey,
-    }),
-    job.request.cacheCapBytes,
-  );
+  // awaited so playback starts as soon as inference finishes. Benchmarks skip
+  // it so disk I/O does not distort thread scaling.
+  if (!job.request.skipCache) {
+    enqueueCacheWrite(
+      encodeSentenceCache({
+        bookId,
+        voiceKey: job.voiceKey,
+        cacheKey: job.key,
+        sentenceId: sentence.id,
+        chapterIndex: sentence.chapterIndex,
+        audio: synthesized.audio,
+        timings: synthesized.timings,
+        speechKey: job.speechKey,
+      }),
+      job.request.cacheCapBytes,
+    );
+  }
 
   return synthesized;
 }
@@ -274,7 +277,7 @@ const workerApi: TtsWorkerApi = {
     request: ModelLoadRequest,
     onProgress?: (progress: ModelLoadProgress) => void,
   ): Promise<ModelInfo> {
-    return ensureModel(request.tier, onProgress);
+    return ensureModel(request.tier, onProgress, { threads: request.threads });
   },
 
   async synthesize(request: SynthesisRequest): Promise<SynthesizedSentence> {

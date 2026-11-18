@@ -15,3 +15,18 @@ createRoot(rootElement).render(
     <App />
   </StrictMode>,
 );
+
+if (import.meta.env.DEV) {
+  // Dev-only diagnostics: `await window.__cadenceThreadBenchmark()` in the
+  // browser console. It replaces the TTS worker between thread counts, so do
+  // not run it while narrating. The production build drops this branch.
+  void import('@/core/tts/threadBenchmark')
+    .then(({ runThreadBenchmark }) => {
+      (window as unknown as {
+        __cadenceThreadBenchmark?: typeof runThreadBenchmark;
+      }).__cadenceThreadBenchmark = runThreadBenchmark;
+    })
+    .catch((error: unknown) => {
+      console.warn('[cadence] thread benchmark unavailable', error);
+    });
+}
