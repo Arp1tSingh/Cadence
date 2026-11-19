@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { cacheOverCap, netCacheBytes } from './cacheAccounting';
 import { encodeSentenceCache } from './cacheEncoding';
-import { SAMPLE_RATE } from './constants';
+import { KOKORO_SAMPLE_RATE } from './constants';
 
 describe('netCacheBytes', () => {
   it('adds writes and subtracts a replaced entry', () => {
@@ -43,6 +43,8 @@ describe('encodeSentenceCache', () => {
         chapterIndex: 0,
         audio,
         timings: [],
+        engine: 'kokoro',
+        sampleRate: KOKORO_SAMPLE_RATE,
         speechKey: 'speech',
       },
       1234,
@@ -50,9 +52,27 @@ describe('encodeSentenceCache', () => {
 
     expect(payload.pcm.byteLength).toBe(audio.length * Int16Array.BYTES_PER_ELEMENT);
     expect(payload.size).toBe(payload.pcm.byteLength);
-    expect(payload.duration).toBeCloseTo(audio.length / SAMPLE_RATE, 10);
+    expect(payload.duration).toBeCloseTo(audio.length / KOKORO_SAMPLE_RATE, 10);
     expect(payload.createdAt).toBe(1234);
     expect(payload.speechKey).toBe('speech');
     expect(audio[0]).toBe(0.5);
+  });
+
+  it('records the engine sample rate so 22.05 kHz Flash audio times correctly', () => {
+    const payload = encodeSentenceCache({
+      bookId: 'book',
+      voiceKey: 'flash-en_US-kathleen-medium',
+      cacheKey: 'key',
+      sentenceId: 'ch01_p0_s0',
+      chapterIndex: 0,
+      audio: new Float32Array(22_050),
+      timings: [],
+      engine: 'piper',
+      sampleRate: 22_050,
+    });
+
+    expect(payload.engine).toBe('piper');
+    expect(payload.sampleRate).toBe(22_050);
+    expect(payload.duration).toBeCloseTo(1, 10);
   });
 });

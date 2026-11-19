@@ -36,6 +36,10 @@ import { speechProfileKey } from '@/core/tts/speechProfile';
 import { wordIndexAt, wordProgressAt } from '@/core/tts/timing';
 import { normalizeVoiceSelection } from '@/core/tts/voices';
 import {
+  DEFAULT_FLASH_VOICE_ID,
+  normalizeFlashVoice,
+} from '@/core/tts/flashVoices';
+import {
   INITIAL_PREROLL_SECONDS,
   nextPreroll,
   prerollReached,
@@ -82,6 +86,8 @@ type FlatSentence = {
 type OpenOptions = {
   voice: VoiceSelection;
   tier: ModelTier;
+  /** Piper voice id; ignored by Studio tiers. */
+  flashVoice?: string;
   volume?: number;
   /** Playback speed; audio is time-stretched without re-synthesis. */
   rate?: number;
@@ -105,7 +111,15 @@ const EMPTY_SNAPSHOT: PlayerSnapshot = {
   durationSeconds: 0,
 };
 
-let loadedTier: ModelTier | null = null;
+/**
+ * Identity of the loaded engine session. A Flash voice change needs a new ONNX
+ * session, while Studio voices share one Kokoro session (styles are data).
+ */
+function modelKeyFor(tier: ModelTier, flashVoice: string): string {
+  return tier === 'flash' ? `flash:${flashVoice}` : tier;
+}
+
+let loadedModelKey: string | null = null;
 
 export class PlayerSession {
   private book: BookDocument | null = null;
@@ -116,7 +130,8 @@ export class PlayerSession {
   private total = 0;
 
   private voice: VoiceSelection = { primary: 'af_heart' };
-  private tier: ModelTier = 'auto';
+  private tier: ModelTier = 'flash';
+  private flashVoice = DEFAULT_FLASH_VOICE_ID;
   private playIntent = false;
   private rate = 1;
   private speech: SpeechProfile = EMPTY_SPEECH_PROFILE;
@@ -186,6 +201,7 @@ export class PlayerSession {
     this.book = book;
     this.voice = normalizeVoiceSelection(options.voice);
     this.tier = options.tier;
+    this.flashVoice = normalizeFlashVoice(options.flashVoice);
     this.rate = clampPlaybackRate(options.rate ?? 1);
     this.speech = options.speech ?? EMPTY_SPEECH_PROFILE;
     this.speechKey = speechProfileKey(this.speech);
@@ -246,12 +262,18 @@ export class PlayerSession {
    * download must not fail the book, and `play()` retries with an error path.
    */
   private preloadModel(): void {
-    const tier = this.tier;
-    void ensureTtsModel(tier, (progress) => this.updateModelProgress(progress))
+    const key = this.modelKey();
+    void ensureTtsModel(this.tier, (progress) => this.updateModelProgress(progress), {
+      flashVoice: this.flashVoice,
+    })
       .then(() => {
-        if (this.book && this.tier === tier) loadedTier = tier;
+        if (this.book && this.modelKey() === key) loadedModelKey = key;
       })
       .catch(() => undefined);
+  }
+
+  private modelKey(): string {
+    return modelKeyFor(this.tier, this.flashVoice);
   }
 
   async play(): Promise<void> {
@@ -270,13 +292,15 @@ export class PlayerSession {
       return;
     }
 
-    if (loadedTier !== this.tier) {
+    if (loadedModelKey !== this.modelKey()) {
       this.setStatus('preparing');
       this.modelProgress = null;
       this.emit();
       try {
-        await ensureTtsModel(this.tier, (progress) => this.updateModelProgress(progress));
-        loadedTier = this.tier;
+        await ensureTtsModel(this.tier, (progress) => this.updateModelProgress(progress), {
+          flashVoice: this.flashVoice,
+        });
+        loadedModelKey = this.modelKey();
       } catch (error) {
         await contextReady;
         this.fail(error, 'The narration model could not start.');
@@ -372,13 +396,35 @@ export class PlayerSession {
   setVoice(voice: VoiceSelection): void {
     this.voice = normalizeVoiceSelection(voice);
     if (!this.book) return;
-    // Every cached sentence is voice-specific, so the timeline restarts from
-    // the current sentence with the new voice key.
+    // Studio voices are style rows on one Kokoro session, so a change is a
+    // natural cache miss. While Flash narrates, the Studio voice only affects
+    // exports and must not interrupt playback.
+    if (this.tier === 'flash') return;
     this.restartTimeline();
   }
 
+  setFlashVoice(voice: string): void {
+    const next = normalizeFlashVoice(voice);
+    if (next === this.flashVoice) return;
+    this.flashVoice = next;
+    if (!this.book || this.tier !== 'flash') return;
+    // A different Piper voice is a different ONNX session and voice key, and a
+    // first use is a ~63 MB download. Warm it now so the setup overlay shows
+    // the download instead of an unexplained buffering counter.
+    loadedModelKey = null;
+    this.restartTimeline();
+    this.preloadModel();
+  }
+
   setTier(tier: ModelTier): void {
+    if (tier === this.tier) return;
     this.tier = tier;
+    if (!this.book) return;
+    // The tier selects the engine and model, and Flash also changes the voice
+    // and sample rate. Keep the position but re-render from this sentence, and
+    // warm the new model immediately so the dock can show download progress.
+    this.restartTimeline();
+    this.preloadModel();
   }
 
   /** Applies new pronunciation settings; spoken text is cache-keyed, so the
@@ -573,7 +619,9 @@ export class PlayerSession {
 
     void synthesizeSentence({
       bookId: this.book.id,
+      tier: this.tier,
       voice: this.voice,
+      flashVoice: this.flashVoice,
       sentence: entry.sentence,
       priority,
       speech: this.speech,

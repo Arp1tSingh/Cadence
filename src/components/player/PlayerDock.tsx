@@ -16,6 +16,7 @@ import type { PlayerSnapshot } from '@/core/player/session';
 import { useSettingsStore } from '@/store/settingsStore';
 import { usePlayerFrame } from '@/store/playerStore';
 import { voiceLabelFor } from '@/core/tts/voices';
+import { flashVoiceLabel } from '@/core/tts/flashVoices';
 import { formatPlaybackRate } from '@/core/audio/rate';
 import { BookCover } from '@/components/bookshelf/BookCover';
 import { IconButton } from '@/components/ui/IconButton';
@@ -48,6 +49,9 @@ export function PlayerDock({
   onOpenSpeed,
 }: PlayerDockProps) {
   const voice = useSettingsStore((state) => state.voice);
+  const tier = useSettingsStore((state) => state.modelTier);
+  const flashVoice = useSettingsStore((state) => state.flashVoice);
+  const narrator = tier === 'flash' ? flashVoiceLabel(flashVoice) : voiceLabelFor(voice);
   const playbackRate = useSettingsStore((state) => state.playbackRate);
   const rangeRef = useRef<HTMLInputElement>(null);
   const elapsedRef = useRef<HTMLSpanElement>(null);
@@ -165,21 +169,29 @@ export function PlayerDock({
   }, [snapshot.status]);
 
   const bufferLabel = slowBuffer
-    ? 'Synthesizing on this device — slower than real time…'
+    ? tier === 'flash'
+      ? 'Preparing the next sentence…'
+      : 'Synthesizing on this device — slower than real time…'
     : firstBuffer
       ? 'Synthesizing the first sentence…'
       : 'Buffering the next sentence…';
 
+  const downloadProgress =
+    snapshot.modelProgress?.stage === 'download' ? snapshot.modelProgress : null;
   const statusLine =
     snapshot.status === 'preparing'
       ? 'Preparing the narration engine…'
       : snapshot.status === 'buffering'
-        ? `${bufferLabel}${waitSeconds >= 3 ? ` · ${waitSeconds} s` : ''}`
+        ? downloadProgress
+          ? `Downloading the ${tier === 'flash' ? 'Flash' : 'Studio'} voice… ${Math.round(
+              downloadProgress.progress * 100,
+            )}%`
+          : `${bufferLabel}${waitSeconds >= 3 ? ` · ${waitSeconds} s` : ''}`
         : snapshot.status === 'ended'
           ? 'Finished'
           : snapshot.status === 'error'
             ? 'Playback stopped'
-            : `Narrated by ${voiceLabelFor(voice)}`;
+            : `Narrated by ${narrator}${tier === 'flash' ? ' · Flash' : ''}`;
 
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 flex justify-center px-3 pb-[max(env(safe-area-inset-bottom),14px)] sm:px-5">

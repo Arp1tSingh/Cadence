@@ -6,16 +6,20 @@ import {
   putAudioCacheEntry,
 } from '@/core/storage/db';
 import { audioCacheSegments, opfs } from '@/core/storage/opfs';
-import { SAMPLE_RATE } from './constants';
+import { KOKORO_SAMPLE_RATE } from './constants';
 import { totalCacheBytes, selectCacheEvictions } from './cachePolicy';
 import { cacheOverCap, netCacheBytes } from './cacheAccounting';
 import { encodeSentenceCache, type SentenceCachePayload } from './cacheEncoding';
 import { int16ToFloat32 } from './pcm';
+import type { TtsEngineId } from '@/types/tts';
 
 export type CachedSentenceAudio = {
   audio: Float32Array;
   timings: WordTiming[];
   duration: number;
+  /** Native rate of the decoded PCM. Legacy rows are 24 kHz Kokoro. */
+  sampleRate: number;
+  engine: TtsEngineId;
 };
 
 /** Deletes both the OPFS PCM file and the IndexedDB metadata row. */
@@ -55,10 +59,13 @@ export async function readSentenceCache(
   }
 
   const audio = int16ToFloat32(bytes);
-  const duration = audio.length / SAMPLE_RATE;
+  const sampleRate = entry.sampleRate ?? KOKORO_SAMPLE_RATE;
+  const duration = audio.length / sampleRate;
   return {
     audio,
     duration,
+    sampleRate,
+    engine: entry.engine ?? 'kokoro',
     timings: entry.timings.map((timing) => ({
       wordId: timing.wordId,
       start: Math.min(timing.start, duration),
@@ -147,6 +154,8 @@ export async function persistSentenceCache(
     timings: payload.timings,
     size: payload.size,
     createdAt: payload.createdAt,
+    engine: payload.engine,
+    sampleRate: payload.sampleRate,
     speechKey: payload.speechKey,
   });
 
@@ -175,6 +184,8 @@ export async function writeSentenceCache(params: {
   chapterIndex: number;
   audio: Float32Array;
   timings: WordTiming[];
+  engine: TtsEngineId;
+  sampleRate: number;
   speechKey?: string;
   cacheCapBytes?: number;
 }): Promise<void> {
@@ -187,6 +198,8 @@ export async function writeSentenceCache(params: {
       chapterIndex: params.chapterIndex,
       audio: params.audio,
       timings: params.timings,
+      engine: params.engine,
+      sampleRate: params.sampleRate,
       speechKey: params.speechKey,
     }),
     params.cacheCapBytes,

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Check, Mic2, Shuffle } from 'lucide-react';
 import type { VoiceSelection } from '@/types/tts';
 import { DEFAULT_VOICE_ID, VOICES, getVoice, isKnownVoice, normalizeVoiceSelection } from '@/core/tts/voices';
+import { FLASH_VOICES } from '@/core/tts/flashVoices';
 import { useSettingsStore } from '@/store/settingsStore';
 import { usePlayerStore } from '@/store/playerStore';
 import { Button } from '@/components/ui/Button';
@@ -19,9 +20,92 @@ function anotherVoice(excluded: string[], preferred?: string): string {
   return VOICES.find((voice) => !excluded.includes(voice.id))?.id ?? DEFAULT_VOICE_ID;
 }
 
+/**
+ * Flash uses a single Piper voice. Blending interpolates Kokoro style rows, so
+ * it is a Studio-only feature; this sheet swaps the whole control set instead
+ * of disabling half of the Studio one.
+ */
+function FlashVoiceSheet({ open, onClose }: VoiceSheetProps) {
+  const current = useSettingsStore((state) => state.flashVoice);
+  const setFlashVoice = useSettingsStore((state) => state.setFlashVoice);
+  const studioVoice = useSettingsStore((state) => state.voice);
+  const [choice, setChoice] = useState(current);
+
+  useEffect(() => {
+    if (open) setChoice(current);
+  }, [current, open]);
+
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title="Flash narrator"
+      description="One compact neural voice, downloaded once and kept on this device."
+      size="lg"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => {
+              setFlashVoice(choice);
+              onClose();
+            }}
+          >
+            <Mic2 size={15} aria-hidden="true" />
+            Use this voice
+          </Button>
+        </>
+      }
+    >
+      <div className="grid gap-2 sm:grid-cols-2">
+        {FLASH_VOICES.map((voice) => {
+          const selected = voice.id === choice;
+          return (
+            <button
+              key={voice.id}
+              type="button"
+              onClick={() => setChoice(voice.id)}
+              className={cn(
+                'relative rounded-card border p-3.5 text-left transition-colors duration-150',
+                selected
+                  ? 'border-brand/50 bg-brand-soft'
+                  : 'border-hairline bg-surface-muted/40 hover:bg-surface-muted/80',
+              )}
+            >
+              <span className="flex items-center gap-2">
+                <span className="text-[13px] font-semibold">{voice.name}</span>
+                <span className="rounded-pill border border-hairline px-1.5 py-0.5 text-[8.5px] font-semibold uppercase tracking-[0.1em] text-ink-tertiary">
+                  {voice.accent} · {voice.gender}
+                </span>
+                {selected ? (
+                  <span className="ml-auto grid size-5 place-items-center rounded-full bg-brand text-white">
+                    <Check size={11} aria-hidden="true" />
+                  </span>
+                ) : null}
+              </span>
+              <span className="mt-1.5 block text-[11.5px] leading-relaxed text-ink-secondary">
+                {voice.description}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <p className="mt-4 text-[11px] leading-relaxed text-ink-tertiary">
+        Flash uses one narrator, so there is no blending. Changing the voice restarts
+        the current sentence. Studio exports still use{' '}
+        {getVoice(studioVoice.primary).name}.
+      </p>
+    </Sheet>
+  );
+}
+
 export function VoiceSheet({ open, onClose }: VoiceSheetProps) {
   const current = useSettingsStore((state) => state.voice);
   const applyVoice = usePlayerStore((state) => state.applyVoice);
+  const tier = useSettingsStore((state) => state.modelTier);
 
   const [primary, setPrimary] = useState(current.primary);
   const [blending, setBlending] = useState(Boolean(current.secondary));
@@ -80,6 +164,9 @@ export function VoiceSheet({ open, onClose }: VoiceSheetProps) {
     });
     return () => window.cancelAnimationFrame(frame);
   }, [open, third]);
+
+  // All hooks above run on every render, so this branch is safe to take here.
+  if (tier === 'flash') return <FlashVoiceSheet open={open} onClose={onClose} />;
 
   const padWeights: VoicePadWeights = (() => {
     const tertiaryShare = tertiaryWeight / 100;

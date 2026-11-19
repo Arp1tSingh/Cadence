@@ -152,6 +152,7 @@ export async function runThreadBenchmark(options?: {
           const result = await synthesizeSentence(
             {
               bookId,
+              tier: 'balanced',
               voice: { primary: 'af_heart' },
               sentence,
               priority: 'foreground',

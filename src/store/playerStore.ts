@@ -49,6 +49,7 @@ export const usePlayerStore = create<PlayerState>()(
       await playerSession.open(book, {
         voice: settings.voice,
         tier: settings.modelTier,
+        flashVoice: settings.flashVoice,
         volume: settings.volume,
         rate: settings.playbackRate,
         speech: activeSpeechProfile(settings),
@@ -114,6 +115,9 @@ playerSession.subscribe(() => {
  */
 useSettingsStore.subscribe((state, previous) => {
   if (state.modelTier !== previous.modelTier) playerSession.setTier(state.modelTier);
+  if (state.flashVoice !== previous.flashVoice) {
+    playerSession.setFlashVoice(state.flashVoice);
+  }
   if (state.cacheCapBytes !== previous.cacheCapBytes) {
     playerSession.setCacheCap(state.cacheCapBytes);
   }

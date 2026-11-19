@@ -4,11 +4,16 @@ import type { SpeechProfile } from './speech';
 export type TtsDevice = 'webgpu' | 'wasm';
 export type TtsDtype = 'q8' | 'fp32';
 
+/** A model family. Flash is Piper/VITS; Studio is Kokoro. */
+export type TtsEngineId = 'kokoro' | 'piper';
+
 /**
- * `balanced` is the default WASM q8 path (~92 MB). `quality` uses WebGPU fp32
- * when the browser exposes an adapter, and `auto` picks the best available.
+ * `flash` is Piper/VITS at 22.05 kHz (~63 MB) and runs faster than real time on
+ * a laptop CPU. `balanced` is Kokoro q8 WASM (~92 MB). `quality` is Kokoro fp32
+ * on WebGPU when available. There is no `auto`: stored `auto` migrates to
+ * `flash`.
  */
-export type ModelTier = 'balanced' | 'quality' | 'auto';
+export type ModelTier = 'flash' | 'balanced' | 'quality';
 
 export type VoiceSelection = {
   primary: string;
@@ -26,6 +31,8 @@ export type VoiceSelection = {
 
 export type ModelLoadRequest = {
   tier: ModelTier;
+  /** Piper voice id; ignored by Kokoro tiers. */
+  flashVoice?: string;
   /**
    * Explicit WASM thread count. Only diagnostics and the device benchmark set
    * this; normal playback lets the engine size the pool from the device.
@@ -37,6 +44,7 @@ export type ModelLoadProgress = {
   stage: 'checking' | 'download' | 'prepare' | 'ready';
   progress: number;
   message: string;
+  engine?: TtsEngineId;
   device?: TtsDevice;
   dtype?: TtsDtype;
   loadedBytes?: number;
@@ -44,25 +52,29 @@ export type ModelLoadProgress = {
 };
 
 export type ModelInfo = {
+  engine: TtsEngineId;
   device: TtsDevice;
   dtype: TtsDtype;
   tier: ModelTier;
+  /** Native sample rate of the loaded model. */
+  sampleRate: number;
   cacheHit: boolean;
+  /** Nice name of the loaded voice, when the engine has one. */
+  voiceName?: string;
   /** WASM thread count the session was initialized with. */
   threads?: number;
 };
 
 export type SynthesisRequest = {
   bookId: string;
+  /** Active tier; selects the engine and its cache identity. */
+  tier: ModelTier;
   voice: VoiceSelection;
+  /** Piper voice id. Required for the `flash` tier. */
+  flashVoice?: string;
   sentence: SentenceNode;
   /** Foreground requests run before prefetch requests. */
   priority?: 'foreground' | 'prefetch';
-  /**
-   * Model tier to load if the sentence is not cached. Only the cache-only
-   * export path needs this; playback loads the model before requesting audio.
-   */
-  tier?: ModelTier;
   /** Lexicon and normalization rules applied to the spoken text. */
   speech?: SpeechProfile;
   /**
@@ -90,6 +102,8 @@ export type SynthesizedSentence = {
 export type CachedSentenceInfo = {
   cacheKey: string;
   voiceKey: string;
+  engine: TtsEngineId;
+  sampleRate: number;
   duration: number;
   fromCache: boolean;
 };

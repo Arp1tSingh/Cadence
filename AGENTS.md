@@ -15,9 +15,9 @@ This file is the operating manual for AI agents working on Cadence. **Read this 
 
 ## Product Summary
 
-Cadence is a static, privacy-first web app that turns EPUB and PDF books into audiobooks entirely in the browser. It uses Kokoro-82M through ONNX Runtime Web (WebGPU with WASM fallback), stores model/audio data in OPFS, and presents an Apple Music-style Live Lyrics player with word-level synchronization.
+Cadence is a static, privacy-first web app that turns EPUB and PDF books into audiobooks entirely in the browser. It uses two local narration engines — **Flash** (Piper/VITS, real-time on laptop CPUs) and **Studio** (Kokoro-82M through ONNX Runtime Web, WebGPU with WASM fallback) — stores model/audio data in OPFS, and presents an Apple Music-style Live Lyrics player with word-level synchronization.
 
-There is no backend, no telemetry, and no user-data upload. The only external request is the one-time Hugging Face model/voice download.
+There is no backend, no telemetry, and no user-data upload. The only external requests are the one-time downloads of the local narration models and voices from Hugging Face.
 
 ## Non-Negotiables
 
@@ -94,7 +94,8 @@ src/
     parsing/           EPUB/PDF parsers, illustration detection, normalizer, sentence chunker,
                        cover colors
     storage/           OPFS manager, IndexedDB schema, model cache, audio cache index
-    tts/               Kokoro engine, voices, phonemizer, synthesis queue, cache keys
+    tts/               Dual-engine TTS: facade, Kokoro + Piper adapters, voices, phonemizer,
+                       synthesis queue, cache keys
     export/            MP3/M4B jobs, chapter atom patcher, export progress
     workers/           Typed Comlink clients
   workers/
@@ -125,6 +126,8 @@ tests/                 Unit tests and small fixtures
 ```text
 OPFS
   /models/cache/<sha256>.<ext>       # transformers.js custom cache
+  /models/flash/v1/<voiceId>.onnx    # Piper weights (per voice, ~63 MB)
+  /models/flash/v1/<voiceId>.json    # Piper config (phoneme map, scales)
   /models/voices/<voice>.bin         # Kokoro style vectors
   /books/<bookId>.<epub|pdf>         # original import
   /covers/<bookId>.<ext>             # cover image
@@ -188,6 +191,7 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 - **Vercel deployed.** The `Arp1tSingh/Cadence` repository is linked to the `cadence` project (`prj_9oVPhcSuhl9x9wigoaLjHY2T3kEc`) through the Vercel Git integration, with `main` as the production branch. The canonical URL is `https://cadence-six-dun.vercel.app/`. Production deployments build with `npm ci` + `npm run build`, serve `dist/`, and send COOP/COEP + CORP on every route. Hashed assets are cached immutably; ORT WASM, PDF.js assets, and voices are cached for seven days. No environment variables or server functions are needed. Live headers and `crossOriginIsolated: true` were verified after deployment.
 - **GitHub Pages retired.** The Pages workflow was removed, the site was disabled through the API, the `github-pages` environment was deleted, and the repository homepage was cleared. Pages could not set COOP/COEP, so it ran with a single WASM thread; the app was fully functional there, but every feature except threaded inference is also available on Vercel with better performance. The Pages URL now returns 404.
 - **Playback accuracy, cache hardening, and EPUB cleanup (2026-11-17).** Seeking is now sentence-exact: `src/core/audio/timeline.ts` holds the pure offset math, `AudioScheduler.schedule()` accepts a `startOffsetSeconds` and calls `source.start(when, offset)`, and `PlayerSession` carries a `pendingOffset` through seek, ±15 s, speed/voice restarts, reload restore, and first play. `ReadingProgress.offsetSeconds` is stored on the 1× content timeline (saved `elapsed × rate`, restored `content / rate`), so it is speed-independent. Sentence start times now use the prepared audio length (`setSentenceDuration()` + `buildDurationTable()`) instead of the parser estimate, so the scrubber no longer steps back at estimated boundaries; the dock also refuses backward snapshot writes while playing. The scrubber and MediaSession position update from the playback timeline (`prefix / rate + elapsed`), fixing intra-sentence under-reporting at non-1× rates. `listAudioCacheSizes()` retries after an IndexedDB transaction timeout and returns `null`, so cache accounting skips a sweep instead of treating the cache as empty; worker cache-write promises are caught. EPUB `1.2.0`: heading text skips `span.caption`/figure/image wrappers, heading-less spine continuations merge into the previous chapter, and a repeated title paragraph is dropped. The dock counts buffering seconds and the speed sheet describes the real resume behavior. Real P&P now parses as 62 chapters (was 76) with no duplicate `CHAPTER II.` and only the 178 caption words removed.
+- **Flash engine integration — complete (2026-11-19).** Piper/VITS now runs behind the same TTS worker queue, lexicon, speech profile, and OPFS cache as Kokoro. `src/core/tts/engine.ts` is a dual-engine facade (`ensureModel` / `synthesizeSentence` / `disposeEngine`); `engines/kokoro.ts` and `engines/piper.ts` hold the implementations, and both sessions stay resident together (at most one Kokoro tier session plus one Piper voice session). `identityForTier()` yields `kokoro-1.0.0` + the existing voice key or `piper-1.0.0` + `flash-<voiceId>`, so Kokoro cache keys are byte-identical and Flash rows carry `engine: 'piper'` and `sampleRate: 22050` (legacy rows read as Kokoro/24 kHz). Flash is the default tier, stored `auto` migrates to Flash, and the six-voice catalog in `flashVoices.ts` records sizes and licenses; voice weights/config are cached in OPFS through `flashModelCache.ts`. A Flash voice change preloads the 63 MB voice and the dock shows `Downloading the Flash voice…`. Exports capture engine, tier, and sample rate per job, offer Studio (default) or Flash with a render estimate, and the exporter uses the job rate (22.05 kHz Piper, 24 kHz Kokoro) before the 48 kHz AAC resample. Real-browser QA: default-on install; cold 63 MB download + first audio 26.6 s, warm reload 894 ms, 65.5 s continuous playback with zero buffering; Kathleen→Amy switch downloaded and cached at 22.05 kHz. Export QA on a seeded two-chapter book: Flash MP3 chapter 139,927 B / 8.65 s; Flash M4B 170,008 B with `ftyp/mdat/moov`, moov at EOF, `chpl` marks at 0 s and 8.65 s, decoded 14.12 s; a Studio export ran to completion while Flash narrated (position advanced 10.5 s to the end, Kokoro rows at 24 kHz, Piper rows untouched), zero console/page errors. Also fixed `Sheet` Escape ownership so closing a sheet no longer closes the player.
 - Next: cross-browser QA sweep (Safari/iOS gesture and safe-area behavior, Firefox WASM fallback) and a large-library storage stress pass. PDF artwork detection is shape-based (text density plus painted image area), so landscape spreads and art pages with long captions can still be skipped.
 
 
@@ -205,6 +209,7 @@ Cache keys must include: sentence ID, a hash of the TTS text, voice key, and an 
 | 7. Performance pass | Complete | Preroll, cache writer, compositor, reader, state cache, scrubber |
 | 8. Playback accuracy + EPUB cleanup | Complete | Sentence-exact resume, cache scan retries, EPUB 1.2.0, dock buffering counter |
 | 9. WASM thread verification | Complete | Measured 1/2/4/6/7/8 threads; 4 is optimal on 4C/8T; benchmark hook |
+| 10. Flash engine integration | Complete | Piper adapter, six voices, dual-engine cache/export, Escape fix |
 
 ## Progress Log
 
@@ -371,6 +376,19 @@ Add one dated entry per milestone. Keep entries short: what changed, what passed
 - Verified: typecheck, lint (0 warnings), 29 test files / 201 tests, production build; `dist/` contains no spike hook.
 - Next: Phase 1 — engine abstraction and a Piper adapter inside `tts.worker.ts`, sharing the queue, lexicon, and cache.
 
+### 2026-11-19 — Flash engine integration
+
+- **Engine facade.** `core/tts/engine.ts` now owns model lifecycle and synthesis across both engines; `engines/kokoro.ts` keeps the existing transformers.js path (tier sessions, WebGPU → WASM fallback), and `engines/piper.ts` loads a Piper voice through `onnxruntime-web` directly (config JSON + `.onnx` in OPFS, eSpeak phonemization, `input`/`input_lengths`/`scales` feeds, 22.05 kHz float output, word timing weights). `tts.worker.ts` computes the cache identity with `identityForTier()`, ensures the right engine per miss, and returns cached `engine`/`sampleRate` with the PCM. `ensureModel` no longer disposes the other engine, so switching Flash ↔ Studio does not reload Piper.
+- **Cache.** `AudioCacheEntry` gained optional `engine` and `sampleRate` (legacy = Kokoro/24 kHz); `encodeSentenceCache` requires them, reads/writes carry them, and `readChapterCacheStats` is engine-scoped through the voice key. Kokoro keys stay `kokoro-1.0.0 + voiceKey`, Piper keys are `piper-1.0.0 + flash-<voiceId>`; the speech profile still folds into both. Exports capture `engine`, tier, voice, and sample rate at start, and chapter rings only count rows for the active engine and narrator.
+- **Playback/state.** `PlayerSession` takes `flashVoice` and restarts the timeline on tier or Flash-voice changes while preserving the 1× content offset; a Flash voice change also calls `preloadModel()` so the 63 MB download gets a dock progress label instead of an unexplained buffer. Settings default `modelTier` is `flash`, stored `auto` migrates to `flash`, and the Flash voice persists separately from the Kokoro voice.
+- **Voices.** `flashVoices.ts` holds six 22.05 kHz Piper medium voices with sizes and licenses (Kathleen CC0 default, Amy CC BY-SA 4.0, Alba CC BY 4.0, Joe CC0, Norman public domain, Northern English male CC BY-SA 4.0), all verified against `rhasspy/piper-voices`.
+- **Export.** `ExportStudio` offers Studio (default) or Flash and shows an estimated render time using measured RTF (0.18× Studio, 2.36× Flash). Jobs persist `engine`; the exporter worker uses the job sample rate for gaps, `AudioSample` timestamps, and the timeline, then resamples to 48 kHz for AAC as before. History labels jobs `Studio · …` or `Flash · …`.
+- **Escape fix.** `Sheet` now calls `stopPropagation()` on Escape. Previously its document listener closed the settings store, React re-rendered, and `PlayerView`'s window listener saw `settingsOpen: false` and closed the whole player.
+- Real-browser QA (Edge, persistent profile): Flash became the stored default; cold Kathleen download + first audio 26.6 s, warm reload first audio 894 ms, 65.5 s of playback with zero buffering; cache rows `engine: 'piper'`, `sampleRate: 22050`, `voiceKey: flash-en_US-kathleen-medium`; switching to Amy downloaded and cached under `flash-en_US-amy-medium`; Studio first audio 21.1 s (cached Kokoro q8) and switching back to Flash needed no Piper reload; reload restored `modelTier: flash`, `flashVoice: en_US-amy-medium`, and the last sentence/offset; zero console/page errors.
+- Export QA on a seeded two-chapter book (`qa-flash-book`, 3 + 2 sentences, real word/chunk spans): Flash MP3 one chapter → 139,927 B, 8.65 s declared / 8.70 s decoded, engine `piper`; Flash M4B whole book → 170,008 B, boxes `ftyp/mdat/moov`, moov at EOF, `chpl` 2 marks at 0 s and 8.65 s, decoded 14.12 s; history showed both `Flash ·` rows. A Studio MP3 export of the same book while Flash narrated completed at 214,964 B / 13.35 s with position advancing 2.5 s → 13 s (to Finished); Kokoro rows appeared at 24 kHz and the Piper rows were untouched; zero errors.
+- Verified: typecheck, lint (0 warnings), 29 test files / 205 tests, production build (`index-*.js`, tts/parser/exporter/stretch workers).
+- Next: cross-browser QA sweep and the large-library storage stress pass.
+
 ## Context-Management Protocol
 
 This project is large; protect context deliberately:
@@ -408,7 +426,10 @@ This project is large; protect context deliberately:
 
 - M4B `chpl` chapter compatibility in Apple Books (accepted; can add a QuickTime chapter track later).
 - Rendered PCM can still reach multiple GB before eviction; the default 2 GB soft cap checks the running byte total on every cache write and sweeps oldest-first when over, plus immediately when the cap is lowered. Clearing rendered audio keeps models, books, progress, and exports.
-- WASM-only devices may synthesize slower than real time; measured 0.18× real time at the optimal 4 threads on a 15 W i5 with q8, so buffering can last tens of seconds per sentence. The WASM pool is now sized to estimated physical cores because 6–8 threads measured slower; more CPU is not the lever. The dock labels the state; the real levers are WebGPU (real adapter) and the planned Flash/Piper engine.
+- WASM-only devices may synthesize slower than real time under Studio; measured 0.18× real time at the optimal 4 threads on a 15 W i5 with q8, so buffering can last tens of seconds per sentence. The WASM pool is sized to estimated physical cores because 6–8 threads measured slower; more CPU is not the lever. Flash avoids the problem (2.36× at 4 threads), and WebGPU remains the Studio lever.
+- Flash and Studio sessions can be resident together: one Piper voice (~63 MB weights plus ~63 MB of ONNX arena on WASM) and one Kokoro tier session. `disposeEngine()` frees both, but switching voices/tiers does not evict the other engine. On memory-constrained devices this roughly doubles model RAM; a future "unload after idle" policy may be needed.
+- The shared TTS worker is serial. A Studio model load (~20–40 s with the model already in OPFS) or a slow Kokoro sentence inside an export blocks Flash synthesis for that window. Cached Flash playback is unaffected because it never enters the queue; the only visible cost is new Flash sentences waiting behind the job.
+- Flash voice files are downloaded from `rhasspy/piper-voices` under their own licenses (see README). The app does not bundle the weights, so attribution lives in Settings/README rather than in the binary.
 - Lexicon replacements are respellings, not IPA: `phonemizer` only emits IPA and espeak `[[...]]` input is not exposed, so users must spell the sound (`Her-my-oh-nee`). Revisit if the engine gains phoneme input.
 - A tier change disposes and reloads the ONNX session on the next narration start. The old session stays resident until then; switching back and forth repeatedly can re-download nothing (OPFS cache) but does pay session init each time.
 - Seek, voice change, and pause call `cancelPending()`; the one in-flight inference still finishes and is cached, so a switch can lag by at most one sentence.
@@ -422,7 +443,7 @@ This project is large; protect context deliberately:
 
 Verified during the performance pass; each item is a known cost that was not removed because the fix was larger than the phase allowed.
 
-- **Synthesis speed is unchanged.** Kokoro `q8` WASM still runs at roughly 0.18× real time at the measured-best 4 threads on a 15 W CPU (0.14× at 1 thread). The preroll only hides the gaps; it does not make inference faster. Threads beyond the four physical cores regress, so more CPU is not the lever. WebGPU on a real adapter and the planned Flash/Piper engine are the remaining large levers.
+- **Kokoro synthesis speed is unchanged.** Kokoro `q8` WASM still runs at roughly 0.18× real time at the measured-best 4 threads on a 15 W CPU (0.14× at 1 thread). The preroll only hides the gaps; it does not make inference faster. Threads beyond the four physical cores regress, so more CPU is not the lever. WebGPU on a real adapter remains the large Studio lever; Flash (Piper) is the real-time path at 2.36×.
 - **Book Page still mounts every word span.** `content-visibility` skips layout and paint for offscreen paragraphs, but a long chapter still creates thousands of DOM nodes and ref callbacks at open. Virtualising paragraphs would remove that cost and is the next large win.
 - **`readChapterCacheStats` reads full cache rows.** It uses the `byBook` index and therefore deserialises every sentence's word timings just to count sentences per chapter. It now runs on open, on chapter change, and every 15 s instead of every 5 s; a size/count-only projection would make it nearly free.
 - **Cache accounting self-heals rather than synchronises.** The TTS worker keeps its own running byte total. Clearing rendered audio or deleting a book from the main thread does not push the new total into the worker; the next over-cap sweep rescans and corrects it.

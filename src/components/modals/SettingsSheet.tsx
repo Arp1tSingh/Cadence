@@ -26,6 +26,7 @@ import {
   type AudioCacheUsage,
 } from '@/core/tts/cacheManager';
 import { VOICES, voiceLabelFor } from '@/core/tts/voices';
+import { FLASH_VOICES, flashVoiceLabel } from '@/core/tts/flashVoices';
 import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { usePlayerStore } from '@/store/playerStore';
@@ -46,20 +47,20 @@ const TABS: ReadonlyArray<{ id: SettingsTab; label: string }> = [
 ];
 
 const TIER_COPY = {
+  flash: {
+    title: 'Flash',
+    meta: 'Piper · 63 MB',
+    description: 'Real-time playback with a compact neural voice.',
+  },
   balanced: {
     title: 'Balanced',
-    meta: 'WASM q8 · 92 MB',
-    description: 'Runs everywhere. Fast to download and light on memory.',
+    meta: 'Studio · WASM q8 · 92 MB',
+    description: 'Kokoro quality. May synthesize slower than real time.',
   },
   quality: {
     title: 'Quality',
-    meta: 'WebGPU fp32 · 326 MB',
-    description: 'Sharper synthesis on supported GPUs. Falls back to q8.',
-  },
-  auto: {
-    title: 'Auto',
-    meta: 'Best available',
-    description: 'Picks WebGPU when the browser exposes an adapter.',
+    meta: 'Studio · WebGPU fp32 · 326 MB',
+    description: 'Best Kokoro quality on supported GPUs. Falls back to q8.',
   },
 } as const;
 
@@ -146,12 +147,15 @@ function NarrationPanel() {
   const tier = useSettingsStore((state) => state.modelTier);
   const setTier = useSettingsStore((state) => state.setModelTier);
   const voice = useSettingsStore((state) => state.voice);
+  const flashVoice = useSettingsStore((state) => state.flashVoice);
+  const setFlashVoice = useSettingsStore((state) => state.setFlashVoice);
   const rate = useSettingsStore((state) => state.playbackRate);
   const showIllustrations = useSettingsStore((state) => state.showIllustrations);
   const setShowIllustrations = useSettingsStore((state) => state.setShowIllustrations);
   const setRate = usePlayerStore((state) => state.setPlaybackRate);
   const applyVoice = usePlayerStore((state) => state.applyVoice);
   const webgpu = useMemo(hasWebGpu, []);
+  const flashActive = tier === 'flash';
 
   return (
     <div className="space-y-5">
@@ -200,8 +204,8 @@ function NarrationPanel() {
           })}
         </div>
         <p className="mt-2 text-[11px] leading-relaxed text-ink-tertiary">
-          A tier change applies the next time narration starts. Models are
-          downloaded once and kept on this device.
+          A tier change re-renders the current sentence with the new engine and
+          keeps your place. Models are downloaded once and kept on this device.
         </p>
       </section>
 
@@ -215,25 +219,56 @@ function NarrationPanel() {
 
         <label className="mt-2.5 block">
           <span className="text-[11px] font-medium text-ink-secondary">
-            Default narrator
+            {flashActive ? 'Flash narrator' : 'Studio narrator'}
           </span>
-          <select
-            value={voice.primary}
-            onChange={(event) => applyVoice({ primary: event.target.value })}
-            className="mt-1 w-full rounded-xl border border-hairline bg-surface px-3 py-2.5 text-[12.5px] text-ink outline-none focus:border-brand/50"
-          >
-            {VOICES.map((entry) => (
-              <option key={entry.id} value={entry.id}>
-                {entry.name} · {entry.accent} {entry.gender}
-              </option>
-            ))}
-          </select>
+          {flashActive ? (
+            <select
+              value={flashVoice}
+              onChange={(event) => setFlashVoice(event.target.value)}
+              className="mt-1 w-full rounded-xl border border-hairline bg-surface px-3 py-2.5 text-[12.5px] text-ink outline-none focus:border-brand/50"
+            >
+              {FLASH_VOICES.map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.name} · {entry.accent} {entry.gender}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <select
+              value={voice.primary}
+              onChange={(event) => applyVoice({ primary: event.target.value })}
+              className="mt-1 w-full rounded-xl border border-hairline bg-surface px-3 py-2.5 text-[12.5px] text-ink outline-none focus:border-brand/50"
+            >
+              {VOICES.map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.name} · {entry.accent} {entry.gender}
+                </option>
+              ))}
+            </select>
+          )}
           <span className="mt-1 block text-[11px] leading-relaxed text-ink-tertiary">
-            Now narrating: {voiceLabelFor(voice)}.
-            {voice.secondary
-              ? ' Choosing one voice clears the current blend; use the microphone button in the player to mix up to three.'
-              : ' Blend up to three voices with the microphone button in the player.'}
+            {flashActive ? (
+              <>
+                Now narrating: {flashVoiceLabel(flashVoice)}. Flash uses one narrator
+                and always runs ahead of real time; Studio exports still use{' '}
+                {voiceLabelFor(voice)}.
+              </>
+            ) : (
+              <>
+                Now narrating: {voiceLabelFor(voice)}.
+                {voice.secondary
+                  ? ' Choosing one voice clears the current blend; use the microphone button in the player to mix up to three.'
+                  : ' Blend up to three voices with the microphone button in the player.'}
+              </>
+            )}
           </span>
+          {flashActive ? (
+            <span className="mt-1 block text-[10.5px] leading-relaxed text-ink-tertiary">
+              Voice license:{' '}
+              {FLASH_VOICES.find((entry) => entry.id === flashVoice)?.license ?? 'see README'}.
+              Weights are downloaded from rhasspy/piper-voices and never redistributed.
+            </span>
+          ) : null}
         </label>
 
         <label className="mt-4 block">

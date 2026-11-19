@@ -3,15 +3,20 @@ import { immer } from 'zustand/middleware/immer';
 import type { BookDocument, ExportJobRecord } from '@/types/domain';
 import type { ExportFormat, ExportProbe, ExportScope } from '@/types/export';
 import type { SpeechProfile } from '@/types/speech';
-import type { ModelTier, VoiceSelection } from '@/types/tts';
+import type { ModelTier, TtsEngineId, VoiceSelection } from '@/types/tts';
 import { deleteExportJob, listExportJobs, putExportJob } from '@/core/storage/db';
 import { exportSegments, opfs } from '@/core/storage/opfs';
 import { exporter } from '@/core/workers/exporterClient';
 import { ensureSentenceCached } from '@/core/workers/ttsClient';
 import { buildExportPlan, coverMimeType, suggestedExportName } from '@/core/export/plan';
 import type { ExportPlan } from '@/core/export/plan';
-import { SENTENCE_GAP_SECONDS } from '@/core/tts/constants';
+import {
+  KOKORO_SAMPLE_RATE,
+  PIPER_SAMPLE_RATE,
+  SENTENCE_GAP_SECONDS,
+} from '@/core/tts/constants';
 import { voiceKeyFor } from '@/core/tts/voices';
+import { flashVoiceKey } from '@/core/tts/flashVoices';
 import { isJobCancelled } from '@/core/tts/cancel';
 import { formatClock } from '@/lib/time';
 import { formatBytes } from '@/lib/format';
@@ -27,10 +32,14 @@ export type ExportPhase =
   | 'done'
   | 'error';
 
+export type ExportEngine = 'studio' | 'flash';
+
 export type StartExportOptions = {
   format: ExportFormat;
   scope: ExportScope;
   chapterIndex?: number;
+  /** Studio (Kokoro) is the default; Flash exports with the Piper voice. */
+  engine?: ExportEngine;
 };
 
 type Runtime = {
@@ -38,9 +47,12 @@ type Runtime = {
   job: ExportJobRecord;
   book: BookDocument;
   voice: VoiceSelection;
+  flashVoice?: string;
   speech: SpeechProfile;
   cacheCapBytes: number;
   tier: ModelTier;
+  engine: TtsEngineId;
+  sampleRate: number;
   paused: boolean;
   cancelled: boolean;
   resumed: (() => void) | null;
@@ -68,9 +80,10 @@ async function ensureCachedWithRetry(
 ) {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await ensureSentenceCached({
+      const cached = await ensureSentenceCached({
         bookId: active.job.bookId,
         voice: active.voice,
+        flashVoice: active.flashVoice,
         sentence,
         priority: 'prefetch',
         tier: active.tier,
@@ -79,6 +92,14 @@ async function ensureCachedWithRetry(
         speech: active.speech,
         cacheCapBytes: active.cacheCapBytes,
       });
+      // Engine version + voice key make a foreign entry impossible, but a
+      // mismatched rate would silently desynchronise chapter marks, so check.
+      if (cached.sampleRate !== active.sampleRate || cached.engine !== active.engine) {
+        throw new Error(
+          'The cached audio for this book was rendered by a different engine. Clear rendered audio and try again.',
+        );
+      }
+      return cached;
     } catch (error) {
       // Playback pauses/seeks call cancelPending(), which drops queued export
       // work too. That is expected; re-queue unless the export itself stopped.
@@ -152,6 +173,7 @@ export const useExportStore = create<ExportState>()(
           format: job.format,
           bookId: job.bookId,
           voiceKey: job.voiceKey,
+          sampleRate: active.sampleRate,
           fileName: job.fileName,
           title: plan.title,
           artist: plan.artist,
@@ -363,8 +385,21 @@ export const useExportStore = create<ExportState>()(
           return;
         }
 
-        const voice = useSettingsStore.getState().voice;
-        const speech = activeSpeechProfile();
+        const settings = useSettingsStore.getState();
+        const engineChoice: ExportEngine = options.engine === 'flash' ? 'flash' : 'studio';
+        const engine: TtsEngineId = engineChoice === 'flash' ? 'piper' : 'kokoro';
+        const voice = settings.voice;
+        const flashVoice = engineChoice === 'flash' ? settings.flashVoice : undefined;
+        // Studio renders with Quality when the listener already uses it; q8 is
+        // the fast, universally supported Studio encoder.
+        const tier: ModelTier =
+          engineChoice === 'flash'
+            ? 'flash'
+            : settings.modelTier === 'quality'
+              ? 'quality'
+              : 'balanced';
+        const sampleRate = engine === 'piper' ? PIPER_SAMPLE_RATE : KOKORO_SAMPLE_RATE;
+        const speech = activeSpeechProfile(settings);
         const id = crypto.randomUUID();
         const suggestedName = suggestedExportName(plan, options.format);
         const chapter =
@@ -389,7 +424,8 @@ export const useExportStore = create<ExportState>()(
           size: 0,
           fileName: `${id}.${options.format}`,
           suggestedName,
-          voiceKey: voiceKeyFor(voice),
+          voiceKey: flashVoice ? flashVoiceKey(flashVoice) : voiceKeyFor(voice),
+          engine,
           title: plan.title,
           createdAt: now,
           updatedAt: now,
@@ -403,9 +439,12 @@ export const useExportStore = create<ExportState>()(
           job,
           book,
           voice,
+          flashVoice,
           speech,
-          cacheCapBytes: useSettingsStore.getState().cacheCapBytes,
-          tier: useSettingsStore.getState().modelTier,
+          cacheCapBytes: settings.cacheCapBytes,
+          tier,
+          engine,
+          sampleRate,
           paused: false,
           cancelled: false,
           resumed: null,

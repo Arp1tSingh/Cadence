@@ -43,6 +43,10 @@ export function Sheet({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
+        // A modal owns Escape. Without this, the event bubbles to the player's
+        // window handler, which sees the just-closed sheet state and closes the
+        // whole player as well.
+        event.stopPropagation();
         closeRef.current();
       }
     };

@@ -1,5 +1,5 @@
 import type { WordTiming } from '@/types/domain';
-import { SAMPLE_RATE } from './constants';
+import type { TtsEngineId } from '@/types/tts';
 import { float32ToInt16 } from './pcm';
 
 /**
@@ -17,6 +17,8 @@ export type SentenceCachePayload = {
   pcm: Uint8Array<ArrayBuffer>;
   duration: number;
   timings: WordTiming[];
+  engine: TtsEngineId;
+  sampleRate: number;
   speechKey?: string;
   /** Byte size of `pcm`, used for cache accounting. */
   size: number;
@@ -31,6 +33,9 @@ export type SentenceCacheInput = {
   chapterIndex: number;
   audio: Float32Array;
   timings: WordTiming[];
+  engine: TtsEngineId;
+  /** Native rate of `audio`; Flash is 22.05 kHz, Kokoro 24 kHz. */
+  sampleRate: number;
   speechKey?: string;
 };
 
@@ -46,8 +51,10 @@ export function encodeSentenceCache(
     sentenceId: input.sentenceId,
     chapterIndex: input.chapterIndex,
     pcm: new Uint8Array(pcm.buffer as ArrayBuffer, pcm.byteOffset, pcm.byteLength),
-    duration: input.audio.length / SAMPLE_RATE,
+    duration: input.audio.length / input.sampleRate,
     timings: input.timings,
+    engine: input.engine,
+    sampleRate: input.sampleRate,
     ...(input.speechKey ? { speechKey: input.speechKey } : {}),
     size: pcm.byteLength,
     createdAt: now,

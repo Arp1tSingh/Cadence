@@ -9,9 +9,8 @@ import type {
   SynthesizedSentence,
   TtsWorkerApi,
 } from '@/types/tts';
-import { SAMPLE_RATE } from '@/core/tts/constants';
 import { createJobCancelledError } from '@/core/tts/cancel';
-import { sentenceCacheKey } from '@/core/tts/cacheKey';
+import { identityForTier, sentenceCacheKey } from '@/core/tts/cacheKey';
 import {
   persistSentenceCache,
   readSentenceCache,
@@ -25,6 +24,7 @@ import { respellSentence } from '@/core/tts/respell';
 import { speechProfileKey } from '@/core/tts/speechProfile';
 import { ensureModel, synthesizeSentence } from '@/core/tts/engine';
 import type { SentenceNode } from '@/types/domain';
+import type { TtsEngineId } from '@/types/tts';
 
 type Priority = 'foreground' | 'prefetch';
 
@@ -34,6 +34,7 @@ type JobBase = {
   sentence: SentenceNode;
   key: string;
   voiceKey: string;
+  engine: TtsEngineId;
   speechKey: string;
   priority: Priority;
   cancelled: boolean;
@@ -114,7 +115,7 @@ async function runAudioJob(job: AudioJob): Promise<SynthesizedSentence> {
   if (cached) {
     return {
       sentenceId: sentence.id,
-      sampleRate: SAMPLE_RATE,
+      sampleRate: cached.sampleRate,
       duration: cached.duration,
       audio: cached.audio,
       timings: cached.timings,
@@ -124,9 +125,17 @@ async function runAudioJob(job: AudioJob): Promise<SynthesizedSentence> {
 
   if (job.cancelled) throw createJobCancelledError();
 
+  // The session may have changed tier between scheduling and inference. A
+  // no-op when the requested engine is already loaded.
+  await ensureModel(job.request.tier, undefined, {
+    flashVoice: job.request.flashVoice,
+  });
+
   const synthesized = await synthesizeSentence({
     sentence,
     voice: job.request.voice,
+    tier: job.request.tier,
+    flashVoice: job.request.flashVoice,
   });
 
   // Encode while the Float32 buffer still exists: Comlink transfers (and
@@ -143,6 +152,8 @@ async function runAudioJob(job: AudioJob): Promise<SynthesizedSentence> {
         chapterIndex: sentence.chapterIndex,
         audio: synthesized.audio,
         timings: synthesized.timings,
+        engine: job.engine,
+        sampleRate: synthesized.sampleRate,
         speechKey: job.speechKey,
       }),
       job.request.cacheCapBytes,
@@ -166,6 +177,8 @@ async function runCacheJob(job: CacheJob): Promise<CachedSentenceInfo> {
     return {
       cacheKey: job.key,
       voiceKey: job.voiceKey,
+      engine: cached.engine,
+      sampleRate: cached.sampleRate,
       duration: cached.duration,
       fromCache: true,
     };
@@ -175,11 +188,15 @@ async function runCacheJob(job: CacheJob): Promise<CachedSentenceInfo> {
 
   // Exports can start before any playback, so load the model lazily on the
   // first cache miss. An all-cached export never touches the model at all.
-  if (job.request.tier) await ensureModel(job.request.tier);
+  await ensureModel(job.request.tier, undefined, {
+    flashVoice: job.request.flashVoice,
+  });
 
   const synthesized = await synthesizeSentence({
     sentence,
     voice: job.request.voice,
+    tier: job.request.tier,
+    flashVoice: job.request.flashVoice,
   });
 
   await writeSentenceCache({
@@ -190,6 +207,8 @@ async function runCacheJob(job: CacheJob): Promise<CachedSentenceInfo> {
     chapterIndex: sentence.chapterIndex,
     audio: synthesized.audio,
     timings: synthesized.timings,
+    engine: job.engine,
+    sampleRate: synthesized.sampleRate,
     speechKey: job.speechKey,
     cacheCapBytes: job.request.cacheCapBytes,
   });
@@ -197,6 +216,8 @@ async function runCacheJob(job: CacheJob): Promise<CachedSentenceInfo> {
   return {
     cacheKey: job.key,
     voiceKey: job.voiceKey,
+    engine: job.engine,
+    sampleRate: synthesized.sampleRate,
     duration: synthesized.duration,
     fromCache: false,
   };
@@ -265,11 +286,19 @@ async function prepareJob(request: SynthesisRequest): Promise<{
   sentence: SentenceNode;
   key: string;
   voiceKey: string;
+  engine: TtsEngineId;
   speechKey: string;
 }> {
   const sentence = respellSentence(request.sentence, request.speech);
-  const { key, voiceKey } = await sentenceCacheKey(sentence, request.voice);
-  return { sentence, key, voiceKey, speechKey: speechProfileKey(request.speech) };
+  const identity = identityForTier(request.tier, request.voice, request.flashVoice);
+  const { key, voiceKey } = await sentenceCacheKey(sentence, identity);
+  return {
+    sentence,
+    key,
+    voiceKey,
+    engine: identity.engine,
+    speechKey: speechProfileKey(request.speech),
+  };
 }
 
 const workerApi: TtsWorkerApi = {
@@ -277,11 +306,14 @@ const workerApi: TtsWorkerApi = {
     request: ModelLoadRequest,
     onProgress?: (progress: ModelLoadProgress) => void,
   ): Promise<ModelInfo> {
-    return ensureModel(request.tier, onProgress, { threads: request.threads });
+    return ensureModel(request.tier, onProgress, {
+      threads: request.threads,
+      flashVoice: request.flashVoice,
+    });
   },
 
   async synthesize(request: SynthesisRequest): Promise<SynthesizedSentence> {
-    const { sentence, key, voiceKey, speechKey } = await prepareJob(request);
+    const { sentence, key, voiceKey, engine, speechKey } = await prepareJob(request);
 
     const result = await new Promise<SynthesizedSentence>((resolve, reject) => {
       enqueue({
@@ -290,6 +322,7 @@ const workerApi: TtsWorkerApi = {
         sentence,
         key,
         voiceKey,
+        engine,
         speechKey,
         priority: priorityOf(request),
         cancelled: false,
@@ -302,7 +335,7 @@ const workerApi: TtsWorkerApi = {
   },
 
   async ensureCached(request: SynthesisRequest): Promise<CachedSentenceInfo> {
-    const { sentence, key, voiceKey, speechKey } = await prepareJob(request);
+    const { sentence, key, voiceKey, engine, speechKey } = await prepareJob(request);
 
     return new Promise<CachedSentenceInfo>((resolve, reject) => {
       enqueue({
@@ -311,6 +344,7 @@ const workerApi: TtsWorkerApi = {
         sentence,
         key,
         voiceKey,
+        engine,
         speechKey,
         // Export work never jumps ahead of playback.
         priority: 'prefetch',

@@ -5,6 +5,10 @@ import { clampPlaybackRate } from '@/core/audio/rate';
 import { DEFAULT_CACHE_CAP_BYTES } from '@/core/tts/cachePolicy';
 import { DEFAULT_VOICE_ID, normalizeVoiceSelection } from '@/core/tts/voices';
 import {
+  DEFAULT_FLASH_VOICE_ID,
+  normalizeFlashVoice,
+} from '@/core/tts/flashVoices';
+import {
   DEFAULT_NORMALIZATION_RULES,
   type LexiconEntry,
   type NormalizationRules,
@@ -19,6 +23,8 @@ export type LexiconDraft = Pick<LexiconEntry, 'phrase' | 'say' | 'enabled'>;
 type SettingsState = {
   loaded: boolean;
   modelTier: ModelTier;
+  /** Piper voice id used by the Flash tier. */
+  flashVoice: string;
   voice: VoiceSelection;
   volume: number;
   playbackRate: number;
@@ -32,6 +38,7 @@ type SettingsState = {
   settingsTab: SettingsTab;
   load: () => Promise<void>;
   setModelTier: (tier: ModelTier) => void;
+  setFlashVoice: (voice: string) => void;
   setVoice: (voice: VoiceSelection) => void;
   setVolume: (volume: number) => void;
   setPlaybackRate: (rate: number) => void;
@@ -121,9 +128,10 @@ function trimDraft(draft: LexiconDraft): LexiconDraft | null {
 export const useSettingsStore = create<SettingsState>()(
   immer((set, get) => ({
     loaded: false,
-    // The blueprint's default is the ~92 MB quantized WASM model. WebGPU fp32
-    // is an opt-in quality mode; `auto` is available for explicit selection.
-    modelTier: 'balanced',
+    // Flash is the default: Piper medium sustains real-time playback on a
+    // laptop CPU, where Kokoro q8 runs at roughly a fifth of real time.
+    modelTier: 'flash',
+    flashVoice: DEFAULT_FLASH_VOICE_ID,
     voice: DEFAULT_VOICE,
     volume: 1,
     playbackRate: 1,
@@ -139,6 +147,7 @@ export const useSettingsStore = create<SettingsState>()(
       try {
         const [
           tier,
+          flashVoice,
           voice,
           volume,
           playbackRate,
@@ -149,6 +158,7 @@ export const useSettingsStore = create<SettingsState>()(
           cacheCap,
         ] = await Promise.all([
           getSetting<ModelTier>('modelTier'),
+          getSetting<string>('flashVoice'),
           getSetting<VoiceSelection>('voice'),
           getSetting<number>('volume'),
           getSetting<number>('playbackRate'),
@@ -159,8 +169,10 @@ export const useSettingsStore = create<SettingsState>()(
           getSetting<number>('cacheCapBytes'),
         ]);
         set((state) => {
+          // `auto` was removed; it and any unknown value fall back to Flash.
           state.modelTier =
-            tier === 'auto' || tier === 'quality' || tier === 'balanced' ? tier : 'balanced';
+            tier === 'flash' || tier === 'balanced' || tier === 'quality' ? tier : 'flash';
+          state.flashVoice = normalizeFlashVoice(flashVoice);
           state.voice = voice ? normalizeVoiceSelection(voice) : DEFAULT_VOICE;
           state.volume = typeof volume === 'number' ? Math.min(1, Math.max(0, volume)) : 1;
           state.playbackRate =
@@ -185,6 +197,14 @@ export const useSettingsStore = create<SettingsState>()(
         state.modelTier = tier;
       });
       void putSetting('modelTier', tier).catch(() => undefined);
+    },
+
+    setFlashVoice: (voice) => {
+      const normalized = normalizeFlashVoice(voice);
+      set((state) => {
+        state.flashVoice = normalized;
+      });
+      void putSetting('flashVoice', normalized).catch(() => undefined);
     },
 
     setVoice: (voice) => {

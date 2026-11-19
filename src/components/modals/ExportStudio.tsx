@@ -14,10 +14,11 @@ import { Sheet } from '@/components/ui/Sheet';
 import { buildExportPlan } from '@/core/export/plan';
 import { formatDuration } from '@/core/parsing/text';
 import { voiceLabelFor } from '@/core/tts/voices';
+import { flashVoiceLabel } from '@/core/tts/flashVoices';
 import { cn } from '@/lib/cn';
 import { formatBytes, formatRelativeTime } from '@/lib/format';
 import { formatClock } from '@/lib/time';
-import { useExportStore } from '@/store/exportStore';
+import { useExportStore, type ExportEngine } from '@/store/exportStore';
 import { usePlayerStore } from '@/store/playerStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import type { ExportJobRecord } from '@/types/domain';
@@ -35,6 +36,13 @@ const FORMAT_COPY: Record<ExportFormat, { title: string; blurb: string; detail: 
     detail: 'The universal fallback. No chapter metadata, but every player and car stereo accepts it.',
   },
 };
+
+/**
+ * Planning hint measured on the 4-core QA laptop: Kokoro q8 renders at ~0.18×
+ * real time and Piper medium at ~2.36×. Slower devices take longer; the label
+ * says "estimate" so the number is never mistaken for a promise.
+ */
+const EXPORT_RTF: Record<ExportEngine, number> = { studio: 0.18, flash: 2.36 };
 
 /** Modal orchestration surface for MP3/M4B export, progress, and downloads. */
 export function ExportStudio() {
@@ -59,11 +67,13 @@ export function ExportStudio() {
   const remove = useExportStore((state) => state.remove);
 
   const voice = useSettingsStore((state) => state.voice);
+  const flashVoice = useSettingsStore((state) => state.flashVoice);
   const playerChapter = usePlayerStore((state) => state.snapshot.chapterIndex);
 
   const [format, setFormat] = useState<ExportFormat | null>(null);
   const [scope, setScope] = useState<ExportScope>('chapter');
   const [chapterIndex, setChapterIndex] = useState(0);
+  const [engine, setEngine] = useState<ExportEngine>('studio');
   const [confirmCancel, setConfirmCancel] = useState(false);
 
   const playerChapterRef = useRef(playerChapter);
@@ -76,6 +86,7 @@ export function ExportStudio() {
     setScope('chapter');
     setChapterIndex(Math.min(playerChapterRef.current, Math.max(0, chapterCount - 1)));
     setFormat(null);
+    setEngine('studio');
     setConfirmCancel(false);
   }, [open, book?.id, chapterCount]);
 
@@ -86,8 +97,10 @@ export function ExportStudio() {
 
   const selected: ExportFormat = format ?? (probes.m4b?.supported ? 'm4b' : 'mp3');
   const selectedProbe = probes[selected];
-  const voiceLabel = voiceLabelFor(voice);
+  const narratorLabel =
+    engine === 'flash' ? flashVoiceLabel(flashVoice) : voiceLabelFor(voice);
   const plannedChapters = plan?.chapters.length ?? 0;
+  const renderEstimate = plan ? plan.estimatedDuration / EXPORT_RTF[engine] : 0;
 
   const busy =
     phase === 'preparing' || phase === 'synthesizing' || phase === 'encoding' || phase === 'finalizing';
@@ -105,7 +118,7 @@ export function ExportStudio() {
 
   const begin = () => {
     if (!plan || plan.totalSentences === 0) return;
-    void start({ format: selected, scope, chapterIndex });
+    void start({ format: selected, scope, chapterIndex, engine });
   };
 
   const close = () => {
@@ -303,6 +316,55 @@ export function ExportStudio() {
 
             <section>
               <h3 className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-ink-tertiary">
+                Narration engine
+              </h3>
+              <div className="mt-2.5 grid gap-2.5 sm:grid-cols-2">
+                {(['studio', 'flash'] as const).map((option) => {
+                  const chosen = engine === option;
+                  const flash = option === 'flash';
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      aria-pressed={chosen}
+                      onClick={() => setEngine(option)}
+                      className={cn(
+                        'rounded-card border p-3.5 text-left transition-colors duration-200',
+                        chosen
+                          ? 'border-brand/60 bg-brand-soft/60'
+                          : 'border-hairline bg-surface-muted/40 hover:border-brand/30',
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[13px] font-semibold">
+                          {flash ? 'Flash' : 'Studio'}
+                        </span>
+                        <span
+                          className={cn(
+                            'grid size-4 place-items-center rounded-full border',
+                            chosen ? 'border-brand bg-brand' : 'border-hairline',
+                          )}
+                          aria-hidden="true"
+                        >
+                          {chosen ? <span className="size-1.5 rounded-full bg-white" /> : null}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[11.5px] text-ink-secondary">
+                        {flash ? 'Piper · several times faster than real time' : 'Kokoro · best quality'}
+                      </p>
+                      <p className="mt-1.5 text-[10.5px] leading-relaxed text-ink-tertiary">
+                        {flash
+                          ? `Narrated by ${flashVoiceLabel(flashVoice)}.`
+                          : `Narrated by ${voiceLabelFor(voice)}. Slower than real time on CPU.`}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section>
+              <h3 className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-ink-tertiary">
                 What to encode
               </h3>
               <div className="mt-2.5 flex rounded-pill border border-hairline bg-surface-muted/40 p-1">
@@ -356,15 +418,18 @@ export function ExportStudio() {
                       {plannedChapters} {plannedChapters === 1 ? 'chapter mark' : 'chapter marks'}
                     </span>
                   ) : null}
-                  <span>Narrated by {voiceLabel}</span>
+                  <span>Narrated by {narratorLabel}</span>
+                  <span className="text-ink-tertiary">
+                    ≈ {formatDuration(renderEstimate)} to render (estimate)
+                  </span>
                 </div>
               ) : null}
 
               {plan && plan.totalSentences > 200 ? (
                 <p className="mt-2.5 rounded-card border border-hairline bg-surface-muted/40 px-3 py-2 text-[11px] leading-relaxed text-ink-tertiary">
-                  Large selections can take a long time on this device. Unlistened sentences are
-                  synthesized first at roughly real-time speed on WASM, so keep the tab open and
-                  plug in. Anything already cached encodes almost instantly.
+                  Large selections can take a long time. Studio synthesis runs slower than real
+                  time on a CPU, while Flash renders several times faster. Keep the tab open and
+                  plugged in; anything already cached encodes almost instantly.
                 </p>
               ) : null}
             </section>
@@ -442,8 +507,9 @@ type ExportJobRowProps = {
 
 function ExportJobRow({ job, onDownload, onRemove }: ExportJobRowProps) {
   const done = job.status === 'done';
+  const engineLabel = job.engine === 'piper' ? 'Flash' : 'Studio';
   const meta = done
-    ? `${formatClock(job.durationSeconds)} · ${formatBytes(job.size)} · ${formatRelativeTime(job.updatedAt)}`
+    ? `${engineLabel} · ${formatClock(job.durationSeconds)} · ${formatBytes(job.size)} · ${formatRelativeTime(job.updatedAt)}`
     : job.error
       ? job.error
       : job.status === 'paused'

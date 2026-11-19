@@ -138,6 +138,13 @@ export type AudioCacheEntry = {
    * written before speech settings existed omit it and are treated as default.
    */
   speechKey?: string;
+  /**
+   * Engine that produced the PCM. Rows written before Flash existed omit it and
+   * are read as Kokoro at 24 kHz.
+   */
+  engine?: 'kokoro' | 'piper';
+  /** Native sample rate of the PCM, so 22.05 kHz Flash audio decodes correctly. */
+  sampleRate?: number;
 };
 
 export type ExportJobRecord = {
@@ -161,6 +168,8 @@ export type ExportJobRecord = {
   /** User-facing download name, e.g. `Pride and Prejudice.m4b`. */
   suggestedName: string;
   voiceKey: string;
+  /** Engine that rendered this job: `piper` for Flash, `kokoro` for Studio. */
+  engine?: 'kokoro' | 'piper';
   title: string;
   error?: string;
   createdAt: number;

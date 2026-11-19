@@ -39,6 +39,7 @@ export function PlayerView({ book }: PlayerViewProps) {
   const setLyricsMode = useSettingsStore((state) => state.setLyricsMode);
   const showIllustrations = useSettingsStore((state) => state.showIllustrations);
   const openSettings = useSettingsStore((state) => state.openSettings);
+  const settingsOpen = useSettingsStore((state) => state.settingsOpen);
   const openExport = useExportStore((state) => state.openStudio);
 
   const [chaptersOpen, setChaptersOpen] = useState(false);
@@ -112,7 +113,13 @@ export function PlayerView({ book }: PlayerViewProps) {
       } else if (event.key === 'ArrowLeft') {
         event.preventDefault();
         seekBy(-15);
-      } else if (event.key === 'Escape' && !chaptersOpen && !voiceOpen && !speedOpen) {
+      } else if (
+        event.key === 'Escape' &&
+        !chaptersOpen &&
+        !voiceOpen &&
+        !speedOpen &&
+        !settingsOpen
+      ) {
         event.preventDefault();
         void closePlayer();
       }
@@ -120,7 +127,7 @@ export function PlayerView({ book }: PlayerViewProps) {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [chaptersOpen, closePlayer, seekBy, speedOpen, toggle, voiceOpen]);
+  }, [chaptersOpen, closePlayer, seekBy, settingsOpen, speedOpen, toggle, voiceOpen]);
 
   const close = useCallback(() => {
     void closePlayer();

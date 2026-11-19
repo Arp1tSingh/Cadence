@@ -217,8 +217,8 @@ function BookDetailSheet({ book, open, onClose, onListen, onRemove }: BookDetail
           ) : null}
 
           <p className="mt-4 rounded-card border border-hairline bg-surface-muted/50 px-3 py-2 text-[11.5px] leading-relaxed text-ink-secondary">
-            Narrated on this device with Kokoro-82M. Press Listen to open the Live Lyrics player,
-            then play to synthesize the first sentences.
+            Narrated on this device with neural voices. Press Listen to open the Live Lyrics
+            player, then play to synthesize the first sentences.
           </p>
         </div>
       </div>

@@ -32,10 +32,10 @@ function getApi(name = 'cadence-tts'): Comlink.Remote<TtsWorkerApi> {
 export async function ensureTtsModel(
   tier: ModelTier,
   onProgress?: (progress: ModelLoadProgress) => void,
-  options?: { threads?: number; name?: string },
+  options?: { threads?: number; name?: string; flashVoice?: string },
 ): Promise<ModelInfo> {
   return getApi(options?.name).ensureModel(
-    { tier, threads: options?.threads },
+    { tier, threads: options?.threads, flashVoice: options?.flashVoice },
     onProgress ? Comlink.proxy(onProgress) : undefined,
   );
 }

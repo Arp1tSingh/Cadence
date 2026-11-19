@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MODEL_FILE_SIZES, modelPlanForTier } from './constants';
+import { MODEL_FILE_SIZES, engineForTier, modelPlanForTier } from './constants';
 
 describe('modelPlanForTier', () => {
   it('keeps the balanced tier on quantized WASM', () => {
@@ -13,11 +13,12 @@ describe('modelPlanForTier', () => {
 
   it('falls back to quantized WASM without an adapter', () => {
     expect(modelPlanForTier('quality', false)).toEqual({ device: 'wasm', dtype: 'q8' });
-    expect(modelPlanForTier('auto', false)).toEqual({ device: 'wasm', dtype: 'q8' });
   });
 
-  it('picks WebGPU in auto mode when available', () => {
-    expect(modelPlanForTier('auto', true)).toEqual({ device: 'webgpu', dtype: 'fp32' });
+  it('routes the flash tier to Piper instead of a Kokoro plan', () => {
+    expect(engineForTier('flash')).toBe('piper');
+    expect(engineForTier('balanced')).toBe('kokoro');
+    expect(engineForTier('quality')).toBe('kokoro');
   });
 
   it('documents the expected download sizes', () => {

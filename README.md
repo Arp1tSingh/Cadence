@@ -4,7 +4,7 @@
 
 **Live demo:** https://cadence-six-dun.vercel.app/
 
-Cadence turns `.epub` and `.pdf` books into studio-quality audiobooks directly in the browser using Kokoro-82M, WebGPU/WASM inference, OPFS storage, and a 60fps live-lyrics player. There is no backend. Books, audio, and reading progress never leave your device.
+Cadence turns `.epub` and `.pdf` books into studio-quality audiobooks directly in the browser using two neural narration engines — **Flash** (Piper/VITS, real-time on a laptop CPU) and **Studio** (Kokoro-82M, WebGPU/WASM) — with OPFS storage and a 60fps live-lyrics player. There is no backend. Books, audio, and reading progress never leave your device.
 
 ## Status
 
@@ -15,6 +15,7 @@ The core implementation is complete across five milestones:
 3. ✅ Local Kokoro TTS, OPFS caching, and gapless playback
 4. ✅ Word-synced Live Lyrics, Book Page mode, voice blending, and speed control
 5. ✅ MP3/M4B export, pronunciation lexicon, normalization rules, model tiers, and cache management
+6. ✅ Flash mode: Piper narration at or above real time, with a per-voice download and Studio/Flash export choice
 
 See [AGENTS.md](./AGENTS.md) for the engineering guide, architecture, and current progress.
 
@@ -40,6 +41,7 @@ For a deployment served from a subpath, set `VITE_BASE` at build time (for examp
 - Tailwind CSS v4, Motion
 - Zustand + Immer, IndexedDB (`idb`), Origin Private File System
 - `kokoro-js`, `@huggingface/transformers`, ONNX Runtime Web
+- Piper/VITS voices through ONNX Runtime Web, with bundled eSpeak phonemization (`phonemizer`)
 - `pdfjs-dist`, JSZip, `fast-xml-parser`, `linkedom`
 - Mediabunny, `@mediabunny/mp3-encoder`, WebCodecs
 - Comlink workers
@@ -61,7 +63,22 @@ In development, the browser console logs the narration backend, dtype, WASM thre
 
 - No accounts, analytics, or telemetry.
 - No book, audio, or reading data is uploaded.
-- The only network request is the one-time download of the local Kokoro model and voice files from Hugging Face.
+- The only network requests are the one-time downloads of the local narration models and voice files from Hugging Face.
+
+## Narration voices
+
+**Flash** uses six 22.05 kHz Piper “medium” voices, downloaded on first use (about 63 MB each):
+
+| Voice | License |
+|---|---|
+| `en_US-kathleen-medium` (default) | CC0 |
+| `en_US-amy-medium` | CC BY-SA 4.0 |
+| `en_GB-alba-medium` | CC BY 4.0 |
+| `en_US-joe-medium` | CC0 |
+| `en_US-norman-medium` | public domain |
+| `en_GB-northern_english_male-medium` | CC BY-SA 4.0 |
+
+Voices are fetched at runtime from [`rhasspy/piper-voices`](https://huggingface.co/rhasspy/piper-voices); their licenses stay with the voice authors. **Studio** uses the built-in Kokoro-82M voice catalog. Exports can be rendered with either engine, and cached audio is keyed by engine, voice, and speech settings so renderings never mix.
 
 ## License
 

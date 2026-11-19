@@ -18,17 +18,15 @@ import type {
   ExportProbe,
   ExporterWorkerApi,
 } from '@/types/export';
-import { SAMPLE_RATE } from '@/core/tts/constants';
-import { int16ToFloat32 } from '@/core/tts/pcm';
-import { audioCacheSegments, exportSegments, opfs } from '@/core/storage/opfs';
+import { int16ToFloat32 } from '@/core/tts/pcm';import { audioCacheSegments, exportSegments, opfs } from '@/core/storage/opfs';
 import { patchMoovWithChpl, type ChapterMarker } from '@/core/export/chpl';
 
 const MP3_BITRATE = 128_000;
 const AAC_BITRATE = 96_000;
 /**
- * Kokoro narrates at 24 kHz, but platform AAC encoders (Media Foundation,
- * AudioToolbox) usually reject 24 kHz. Encode at 48 kHz and let Mediabunny
- * resample; 44.1 kHz is the fallback on stricter platforms.
+ * Kokoro narrates at 24 kHz and Flash at 22.05 kHz; platform AAC encoders
+ * (Media Foundation, AudioToolbox) usually reject both. Encode at 48 kHz and
+ * let Mediabunny resample; 44.1 kHz is the fallback on stricter platforms.
  */
 const AAC_SAMPLE_RATES = [48_000, 44_100, 24_000];
 /** Flush granularity for the streaming target. */
@@ -232,7 +230,7 @@ const workerApi: ExporterWorkerApi = {
     }
 
     const pcm = int16ToFloat32(bytes);
-    const gapFrames = Math.max(0, Math.round(options.gapSeconds * SAMPLE_RATE));
+    const gapFrames = Math.max(0, Math.round(options.gapSeconds * options.sampleRate));
     // The gap trails each sentence, so chapter marks land exactly on the first
     // spoken frame of the next chapter.
     const data = new Float32Array(pcm.length + gapFrames);
@@ -242,7 +240,7 @@ const workerApi: ExporterWorkerApi = {
       data,
       format: 'f32-planar',
       numberOfChannels: 1,
-      sampleRate: SAMPLE_RATE,
+      sampleRate: options.sampleRate,
       timestamp: session.timeline,
     });
 
@@ -252,7 +250,7 @@ const workerApi: ExporterWorkerApi = {
       sample.close();
     }
 
-    session.timeline += data.length / SAMPLE_RATE;
+    session.timeline += data.length / options.sampleRate;
     return { durationSeconds: session.timeline, bytes: session.meter.bytes };
   },
 

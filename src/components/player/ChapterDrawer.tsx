@@ -8,6 +8,8 @@ import {
   type ChapterCacheStat,
 } from '@/core/tts/cacheStats';
 import { speechProfileKey } from '@/core/tts/speechProfile';
+import { identityForTier } from '@/core/tts/cacheKey';
+import { flashVoiceLabel } from '@/core/tts/flashVoices';
 import { voiceLabelFor } from '@/core/tts/voices';
 import { usePlayerStore } from '@/store/playerStore';
 import { useSettingsStore } from '@/store/settingsStore';
@@ -36,8 +38,15 @@ export function ChapterDrawer({
   onSelect,
 }: ChapterDrawerProps) {
   const voice = useSettingsStore((state) => state.voice);
+  const tier = useSettingsStore((state) => state.modelTier);
+  const flashVoice = useSettingsStore((state) => state.flashVoice);
   const lexicon = useSettingsStore((state) => state.lexicon);
   const rules = useSettingsStore((state) => state.normalizationRules);
+  const narrator = tier === 'flash' ? flashVoiceLabel(flashVoice) : voiceLabelFor(voice);
+  const voiceKey = useMemo(
+    () => identityForTier(tier, voice, flashVoice).voiceKey,
+    [tier, voice, flashVoice],
+  );
   const speechKey = useMemo(
     () => speechProfileKey({ lexicon, rules }),
     [lexicon, rules],
@@ -50,7 +59,7 @@ export function ChapterDrawer({
     let cancelled = false;
 
     const refresh = () => {
-      void readChapterCacheStats(book, voice, speechKey).then((next) => {
+      void readChapterCacheStats(book, voiceKey, speechKey).then((next) => {
         if (!cancelled) setStats(next);
       });
     };
@@ -65,7 +74,7 @@ export function ChapterDrawer({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [book, chapterIndex, open, speechKey, voice]);
+  }, [book, chapterIndex, open, speechKey, voiceKey]);
 
   const completeChapters = useMemo(() => {
     let count = 0;
@@ -84,7 +93,7 @@ export function ChapterDrawer({
       open={open}
       onClose={onClose}
       title="Chapters"
-      description={`${book.chapters.length} chapters · ${formatDuration(book.estimatedDuration)} of narration · ${completeChapters} of ${book.chapters.length} fully cached for ${voiceLabelFor(voice)}`}
+      description={`${book.chapters.length} chapters · ${formatDuration(book.estimatedDuration)} of narration · ${completeChapters} of ${book.chapters.length} fully cached for ${narrator}`}
       size="lg"
     >
       <ol className="no-scrollbar -mx-1 max-h-[58vh] space-y-1 overflow-y-auto px-1 pb-1">
@@ -170,7 +179,7 @@ export function ChapterDrawer({
       </ol>
 
       <p className="mt-3 px-1 text-[10.5px] leading-relaxed text-ink-tertiary">
-        Rings reflect narration cached for {voiceLabelFor(voice)}. Switching narrator or
+        Rings reflect narration cached for {narrator}. Switching narrator or
         pronunciation rules re-renders audio, so cached chapters may reset.
       </p>
     </Sheet>

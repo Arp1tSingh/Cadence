@@ -13,6 +13,8 @@ export type ExportEncodeOptions = {
   format: ExportFormat;
   bookId: string;
   voiceKey: string;
+  /** Native sample rate of every sentence's PCM in this job. */
+  sampleRate: number;
   /** File name inside OPFS `/exports`, including its extension. */
   fileName: string;
   title: string;

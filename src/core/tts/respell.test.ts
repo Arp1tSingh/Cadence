@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildSentence } from '@/core/parsing/sentences';
-import { sentenceCacheKey } from './cacheKey';
+import { sentenceCacheKey, identityForTier } from './cacheKey';
 import { respellSentence } from './respell';
 import { DEFAULT_NORMALIZATION_RULES, type LexiconEntry, type SpeechProfile } from '@/types/speech';
 
@@ -156,7 +156,7 @@ describe('respellSentence', () => {
 
   it('changes the cache key only when the spoken text changes', async () => {
     const sentence = makeSentence('Hermione smiled.');
-    const voice = { primary: 'af_heart' };
+    const voice = identityForTier('balanced', { primary: 'af_heart' });
     const original = await sentenceCacheKey(sentence, voice);
 
     const unchanged = respellSentence(sentence, profile());
