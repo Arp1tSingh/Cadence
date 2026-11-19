@@ -75,6 +75,7 @@ Always run `npm run typecheck && npm run lint && npm run test && npm run build` 
 
 - `vite-plugin-static-copy` copies ORT WASM and PDF.js CMaps/standard fonts into `dist/wasm` and `dist/pdfjs` (and serves them in dev). Do not commit generated assets.
 - `onnxruntime-web` is pinned to the exact version required by `@huggingface/transformers` 3.8.1.
+- Linux installs must set `ONNXRUNTIME_NODE_INSTALL_CUDA=skip`. `onnxruntime-node` is a transitive dependency of transformers.js, and its postinstall tries to download CUDA binaries from the ORT GitHub release; the 1.21.0 asset returns 404 and Cadence only uses WASM/WebGPU. Both `ci.yml` and `vercel.json` set the variable.
 - `public/` holds only hand-authored files (`favicon.svg`, `_headers`).
 - The theme preference currently lives in `localStorage` (`cadence.theme`) for flash-free first paint; migrate it into the settings store when that lands.
 
