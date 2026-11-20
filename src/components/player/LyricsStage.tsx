@@ -23,8 +23,12 @@ export function LyricsStage({ sentence, previousText, nextText, active }: Lyrics
 
   useEffect(() => {
     lastWordRef.current = -1;
-    wordRefs.current = [];
-  }, [sentence?.id]);
+    // React has already attached this sentence's refs by the time the effect
+    // runs. Clearing the whole array here would race that commit and leave the
+    // frame loop with nothing to fill; only trim refs left over from a longer
+    // previous sentence.
+    wordRefs.current.length = sentence?.words.length ?? 0;
+  }, [sentence?.id, sentence?.words.length]);
 
   usePlayerFrame((frame) => {
     if (!sentence || frame.sentenceId !== sentence.id) return;

@@ -34,6 +34,7 @@
   --shadow-dock:
     0 30px 90px rgb(0 0 0 / 0.28), inset 0 1px 0 rgb(255 255 255 / 0.16);
   --shadow-glow: 0 0 48px rgb(250 45 72 / 0.35);
+  --lyric-glow: 0 0 18px rgb(250 45 72 / 0.16);
 }
 
 [data-theme='dark'] {
@@ -57,6 +58,7 @@
   --shadow-dock:
     0 30px 90px rgb(0 0 0 / 0.55), inset 0 1px 0 rgb(255 255 255 / 0.16);
   --shadow-glow: 0 0 48px rgb(255 92 116 / 0.4);
+  --lyric-glow: 0 0 28px rgb(255 92 116 / 0.42);
 }
 
 @layer base {
@@ -227,7 +229,9 @@
     position: relative;
     display: inline-block;
     color: color-mix(in srgb, var(--color-ink) var(--lyric-dim), transparent);
-    transition: color 220ms ease;
+    transition:
+      color 220ms ease,
+      text-shadow 220ms ease;
   }
 
   .lyric-word-fill {
@@ -240,12 +244,14 @@
     clip-path: inset(0 calc(100% - var(--fill, 0%)) 0 0);
   }
 
+  /*
+   * The glow lives on the word itself, not on the clipped fill. A shadow on the
+   * fill is cut off at its clip rectangle and shows as a hard box around the
+   * active word.
+   */
   .lyric-word[data-active='true'] {
     --lyric-dim: 46%;
-  }
-
-  .lyric-word[data-active='true'] .lyric-word-fill {
-    text-shadow: 0 0 28px color-mix(in srgb, var(--color-brand) 45%, transparent);
+    text-shadow: var(--lyric-glow);
   }
 
   /* Book Page mode keeps the same sweep on a warmer, higher-contrast page. */
