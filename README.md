@@ -2,7 +2,7 @@
 
 **A 100% local, browser-native eBook-to-audiobook studio with Apple Music-style Live Lyrics.**
 
-**Live demo:** https://cadence-six-dun.vercel.app/
+**Live demo:** https://cadenceaudio.vercel.app/
 
 Cadence turns `.epub` and `.pdf` books into studio-quality audiobooks directly in the browser using two neural narration engines — **Flash** (Piper/VITS, real-time on a laptop CPU) and **Studio** (Kokoro-82M, WebGPU/WASM) — with OPFS storage and a 60fps live-lyrics player. There is no backend. Books, audio, and reading progress never leave your device.
 
@@ -21,7 +21,7 @@ See [AGENTS.md](./AGENTS.md) for the engineering guide, architecture, and curren
 
 ## Deployment
 
-Cadence is deployed on Vercel at [cadence-six-dun.vercel.app](https://cadence-six-dun.vercel.app/). The `main` branch is linked through Vercel's Git integration, so every push to `main` creates a production deployment.
+Cadence is deployed on Vercel at [cadenceaudio.vercel.app](https://cadenceaudio.vercel.app/). The `main` branch is linked through Vercel's Git integration, so every push to `main` creates a production deployment.
 
 Cadence is a static Vite SPA with no server-side code. To deploy your own copy, import the repository at [vercel.com/new](https://vercel.com/new) or run:
 
