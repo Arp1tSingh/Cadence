@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "A 100% local, browser-native eBook-to-audiobook studio with Apple Music-style Live Lyrics.",
+  "license": "MIT",
   "engines": {
     "node": ">=24"
   },

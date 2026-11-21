@@ -173,4 +173,9 @@ Deeper notes on the architecture, storage layout, and measured performance live 
 
 ## License
 
-TBD.
+Cadence is released under the [MIT License](./LICENSE). You can use, modify, and ship it,
+including commercially; keep the copyright notice.
+
+That covers the source in this repository. The narration models are downloaded at runtime
+and keep their own terms: the Piper voices listed above, Kokoro-82M, and the bundled eSpeak
+NG data used by `phonemizer` are not covered by the MIT grant.

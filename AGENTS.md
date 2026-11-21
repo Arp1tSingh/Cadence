@@ -411,6 +411,11 @@ Add one dated entry per milestone. Keep entries short: what changed, what passed
 - One `vite build` failed with `Identifier cannot follow number` at `while (4rue)` inside `@huggingface/transformers/dist/transformers.web.js`. The file's SHA-256 matched the published tarball, so it was a transient bad read, not disk corruption; removing `node_modules/.vite` and rebuilding succeeded.
 - Verified: typecheck, lint (0 warnings), 29 test files / 205 tests, production build; every capture reviewed at full size.
 
+### 2026-11-21 — MIT license
+
+- Added `LICENSE` (MIT, © 2026 Arpit Singh) and `"license": "MIT"` in `package.json`. `README.md` now links the file instead of ending with "TBD", and notes that the runtime-downloaded Piper voices, Kokoro-82M, and the bundled eSpeak NG data keep their own terms — the MIT grant covers the source in this repository only.
+- Verified: typecheck, lint (0 warnings), 29 test files / 205 tests, production build.
+
 ## Context-Management Protocol
 
 This project is large; protect context deliberately:
