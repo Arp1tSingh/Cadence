@@ -30,7 +30,7 @@ narration models and voices.
 |---|---|---|
 | Engine | Piper/VITS, 22.05 kHz | Kokoro-82M |
 | Voices | Six fixed narrators | Kokoro catalog plus 3-voice blending |
-| Speed | Faster than real time (~2.4× on a laptop CPU) | High quality; keeps up on WebGPU, falls behind on WASM |
+| Speed | Faster than real time (~2.4× on a laptop CPU) | Rich prosody; needs WebGPU to stay ahead of playback |
 | Best for | Long books, phones, all-day listening | The best sound your hardware can produce |
 
 Flash is the default: a 63 MB voice downloads once, then narrates in real time with no
