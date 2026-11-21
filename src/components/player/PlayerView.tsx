@@ -151,10 +151,12 @@ export function PlayerView({ book }: PlayerViewProps) {
             <ChevronLeft size={19} />
           </IconButton>
 
-          <div className="min-w-0 flex-1 text-center">
+          <div className="min-w-0 flex-1 text-left sm:text-center">
             <p className="truncate text-[9.5px] font-semibold uppercase tracking-[0.16em] text-ink-tertiary">
-              {book.metadata.author ?? 'Cadence'} · Chapter {snapshot.chapterIndex + 1} of{' '}
-              {book.chapters.length}
+              <span className="hidden min-[480px]:inline">
+                {book.metadata.author ?? 'Cadence'} ·{' '}
+              </span>
+              Chapter {snapshot.chapterIndex + 1} of {book.chapters.length}
             </p>
             <p className="mt-0.5 truncate text-[12.5px] font-semibold tracking-[-0.02em]">
               {snapshot.chapterTitle || book.metadata.title}
