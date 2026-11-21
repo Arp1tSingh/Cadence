@@ -38,6 +38,10 @@ network. Studio is one tap away for the richest prosody, uses WebGPU when the br
 offers it, and falls back to quantized WASM. Switch engines mid-book and your place is
 kept.
 
+<p align="center">
+  <img src="docs/screenshots/narration.webp" width="640" alt="Narration settings: the Flash, Balanced, and Quality engines, narrator choice, playback speed, and reading options" />
+</p>
+
 ## Features
 
 **Live Lyrics, word by word.** The current sentence sits center stage and fills word by
@@ -65,9 +69,9 @@ EPUBs are refused with a clear message rather than producing empty narration.
 PCM, so a chapter you've heard starts instantly and a chapter you haven't shows a live cache
 ring while it renders.
 
-| Chapters | Narration settings |
-|---|---|
-| ![Chapter drawer with per-chapter cache rings](docs/screenshots/chapters.webp) | ![Settings for the narration engine, narrator, speed, and reading](docs/screenshots/narration.webp) |
+<p align="center">
+  <img src="docs/screenshots/chapters.webp" width="600" alt="The chapter drawer, with a cache ring on every chapter showing what is already narrated" />
+</p>
 
 **Speed without chipmunk.** 0.5× to 3×, applied with offline WSOLA time-stretching, so the
 narrator keeps their pitch and the word timings stay aligned. The scrubber always reports
