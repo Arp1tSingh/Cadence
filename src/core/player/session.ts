@@ -558,6 +558,9 @@ export class PlayerSession {
 
     const shouldPlay = options.keepPlaying ?? this.playIntent;
     this.playIntent = shouldPlay;
+    // Seeking after the book finished is a deliberate reposition. Leave the
+    // 'ended' state so Play resumes here instead of restarting the whole book.
+    if (!shouldPlay && this.status === 'ended') this.status = 'paused';
 
     this.emit();
     this.saveProgress();

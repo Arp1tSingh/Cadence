@@ -75,6 +75,10 @@ export function estimateSentenceDuration(wordCount: number): number {
 
 export function formatDuration(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return '0m';
+  const roundedSeconds = Math.max(1, Math.round(seconds));
+  // Short clips and chapters read better in seconds; rounding them up to "1m"
+  // hid the difference between 1x and 3x in the speed and export previews.
+  if (roundedSeconds < 60) return `${roundedSeconds}s`;
   const totalMinutes = Math.max(1, Math.round(seconds / 60));
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;

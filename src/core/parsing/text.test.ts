@@ -41,4 +41,11 @@ describe('formatDuration', () => {
     expect(formatDuration(90)).toBe('2m');
     expect(formatDuration(3660)).toBe('1h 1m');
   });
+
+  it('keeps short durations in seconds', () => {
+    expect(formatDuration(12)).toBe('12s');
+    expect(formatDuration(36.4)).toBe('36s');
+    expect(formatDuration(59)).toBe('59s');
+    expect(formatDuration(59.7)).toBe('1m');
+  });
 });

@@ -298,9 +298,23 @@ export const useExportStore = create<ExportState>()(
 
       openStudio: async (book) => {
         set((state) => {
+          const switchedBook = state.book != null && state.book.id !== book.id;
           state.open = true;
           state.book = book;
           state.error = null;
+          if (switchedBook) {
+            // History is per book. Clear the previous book's rows before the
+            // async load, and drop its finished summary so "Export ready" and
+            // Download cannot point at another book's file.
+            state.jobs = [];
+            if (!runtime) {
+              state.active = null;
+              state.phase = 'idle';
+              state.message = '';
+              state.bytes = 0;
+              state.durationSeconds = 0;
+            }
+          }
         });
 
         const probes = await Promise.all([
@@ -588,6 +602,8 @@ export const useExportStore = create<ExportState>()(
       remove: async (job) => {
         if (runtime?.job.id === job.id) await get().cancel();
         await opfs.remove(exportSegments(job.fileName)).catch(() => undefined);
+        // A paused or interrupted export can leave Mediabunny's swap file.
+        await opfs.remove(exportSegments(`${job.fileName}.crswap`)).catch(() => undefined);
         await deleteExportJob(job.id).catch(() => undefined);
         if (get().active?.id === job.id) {
           set((state) => {

@@ -2,9 +2,15 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import type { BookDocument } from '@/types/domain';
 import type { ParseProgress } from '@/types/parser';
-import { deleteBook as deleteBookRecord, listBooks, putBook } from '@/core/storage/db';
-import { deleteBookBlobs } from '@/core/storage/opfs';
+import {
+  deleteBook as deleteBookRecord,
+  listBooks,
+  listExportJobs,
+  putBook,
+} from '@/core/storage/db';
+import { deleteBookBlobs, exportSegments, opfs } from '@/core/storage/opfs';
 import { parseBook } from '@/core/workers/parserClient';
+import { useExportStore } from './exportStore';
 
 export type ImportStatus = 'queued' | 'parsing' | 'done' | 'duplicate' | 'error';
 
@@ -182,8 +188,33 @@ export const useLibraryStore = create<LibraryState>()(
         state.books = state.books.filter((candidate) => candidate.id !== id);
       });
 
+      // Closing the export sheet keeps a job running. Stop it before the
+      // book's PCM cache and metadata disappear underneath the encoder.
+      const exportState = useExportStore.getState();
+      if (
+        exportState.active?.bookId === id &&
+        (exportState.active.status === 'running' || exportState.active.status === 'paused')
+      ) {
+        await exportState.cancel().catch(() => undefined);
+      }
+
+      // Finished exports are files in OPFS keyed by job id; the database rows
+      // alone do not remove them. Delete them with the book so they cannot
+      // linger unreachable after the history is gone.
+      const jobs = await listExportJobs(id).catch(() => []);
+      await Promise.all(
+        jobs.flatMap((job) => [
+          opfs.remove(exportSegments(job.fileName)).catch(() => undefined),
+          opfs.remove(exportSegments(`${job.fileName}.crswap`)).catch(() => undefined),
+        ]),
+      );
+
       await deleteBookRecord(id);
       await deleteBookBlobs(id);
+
+      if (useExportStore.getState().active?.bookId === id) {
+        useExportStore.getState().resetRun();
+      }
     },
   })),
 );
