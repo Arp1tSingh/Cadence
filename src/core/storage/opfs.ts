@@ -133,10 +133,21 @@ export class OpfsStore {
     const parent = await this.ensureDir(...segments.slice(0, -1));
     const name = segments[segments.length - 1];
     if (!name) return;
-    await parent.removeEntry(name, { recursive: true }).catch((error: unknown) => {
-      if (error instanceof DOMException && error.name === 'NotFoundError') return;
-      throw error;
-    });
+
+    // A file inside the directory may still have an open writable while a
+    // cancelled job finishes its last cache write. Chrome reports that as
+    // NoModificationAllowedError; retry briefly until the stream closes.
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await parent.removeEntry(name, { recursive: true });
+        return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'NotFoundError') return;
+        const locked = error instanceof DOMException && error.name === 'NoModificationAllowedError';
+        if (!locked || attempt >= 6) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 50 * 2 ** attempt));
+      }
+    }
   }
 
   async estimate(): Promise<{ usage: number; quota: number }> {

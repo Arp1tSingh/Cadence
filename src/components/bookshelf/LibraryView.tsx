@@ -99,7 +99,7 @@ export function LibraryView({ onImport, onListen }: LibraryViewProps) {
         open={Boolean(pendingRemoval)}
         onClose={() => (removing ? undefined : setRemoveId(null))}
         title="Remove this book?"
-        description="The book, its cover, and any cached narration are deleted from this device. Your original file is untouched."
+        description="The book, its cover, cached narration, and exports are deleted from this device. Your original file is untouched."
         footer={
           <>
             <Button variant="ghost" onClick={() => setRemoveId(null)} disabled={removing}>

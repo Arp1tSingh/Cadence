@@ -86,6 +86,15 @@ export async function getBook(id: string): Promise<StoredBook | undefined> {
   return db.get('books', id);
 }
 
+/**
+ * Cheap existence check for background workers. `getBook` deserialises every
+ * sentence of the document, while a delete race only needs the key.
+ */
+export async function hasBookRecord(id: string): Promise<boolean> {
+  const db = await getDb();
+  return (await db.count('books', id)) > 0;
+}
+
 export async function findBookByFingerprint(
   fingerprint: string,
 ): Promise<StoredBook | undefined> {

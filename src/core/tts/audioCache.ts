@@ -2,6 +2,7 @@ import type { AudioCacheEntry, WordTiming } from '@/types/domain';
 import {
   deleteAudioCacheEntry,
   getAudioCacheEntry,
+  hasBookRecord,
   listAudioCacheSizes,
   putAudioCacheEntry,
 } from '@/core/storage/db';
@@ -137,12 +138,22 @@ export async function persistSentenceCache(
   payload: SentenceCachePayload,
   cacheCapBytes?: number,
 ): Promise<void> {
-  const existing = await getAudioCacheEntry(payload.cacheKey);
+  // Deleting a book can race an in-flight synthesis (notably an export that
+  // was cancelled from the shelf). Never recreate a cache directory that
+  // removeBook has already cleared.
+  if (!(await hasBookRecord(payload.bookId))) return;
 
-  await opfs.write(
-    audioCacheSegments(payload.bookId, payload.voiceKey, payload.cacheKey),
-    payload.pcm,
-  );
+  const existing = await getAudioCacheEntry(payload.cacheKey);
+  const segments = audioCacheSegments(payload.bookId, payload.voiceKey, payload.cacheKey);
+
+  await opfs.write(segments, payload.pcm);
+
+  // The record can disappear while PCM is being written. Drop the fresh file
+  // instead of leaving an unreachable orphan behind.
+  if (!(await hasBookRecord(payload.bookId))) {
+    await opfs.remove(segments).catch(() => undefined);
+    return;
+  }
 
   await putAudioCacheEntry({
     key: payload.cacheKey,

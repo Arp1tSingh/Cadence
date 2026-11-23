@@ -3,6 +3,7 @@ import { immer } from 'zustand/middleware/immer';
 import type { BookDocument } from '@/types/domain';
 import type { ParseProgress } from '@/types/parser';
 import {
+  clearAudioCacheIndex,
   deleteBook as deleteBookRecord,
   listBooks,
   listExportJobs,
@@ -210,7 +211,19 @@ export const useLibraryStore = create<LibraryState>()(
       );
 
       await deleteBookRecord(id);
-      await deleteBookBlobs(id);
+      await deleteBookBlobs(id).catch((error: unknown) => {
+        // A very slow in-flight cache write can outlast the retry window.
+        // The book is already gone from the shelf; try once more rather than
+        // surfacing an unhandled rejection.
+        console.warn('[cadence] book storage cleanup failed', error);
+        window.setTimeout(() => {
+          void deleteBookBlobs(id).catch(() => undefined);
+        }, 3000);
+      });
+
+      // Delete rows inserted by a cache write that was already past its
+      // existence check when the book record disappeared.
+      await clearAudioCacheIndex(id).catch(() => undefined);
 
       if (useExportStore.getState().active?.bookId === id) {
         useExportStore.getState().resetRun();
